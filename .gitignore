@@ -1,17 +1,26 @@
+# secrets
 .env
 .env.*
 !.env.example
+keys/
+
+# python
 __pycache__/
 *.pyc
 .venv/
+
+# node / next
 node_modules/
 .next/
+
+# sqlite
 *.db
 *.sqlite
+
+# terraform
 .terraform/
-*.tfstate
-*.tfstate.*
-keys/
+*.tfstate*
+*.tfplan
 
 # third-party skill repo cloned in place (has its own .git)
 .claude/skills/awesome-design-md/
