@@ -27,5 +27,7 @@ node_modules/
 *.tfstate*
 *.tfplan
 
-# third-party skill repo cloned in place (has its own .git)
-.claude/skills/awesome-design-md/
+# local AI-agent skills: tooling, not part of GhostOps (third-party content)
+.agents/
+.claude/skills/
+skills-lock.json
