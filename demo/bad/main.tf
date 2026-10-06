@@ -3,6 +3,7 @@
 #   2. IAM policy allowing Action * on Resource *
 #   3. S3 bucket made public-read (ACL + public access block disabled)
 #   4. RDS instance without storage encryption
+# plus an EC2 instance behind the open security group (its blast radius).
 # Provider points at MiniStack with fake credentials. Never real AWS.
 
 terraform {
@@ -55,6 +56,17 @@ resource "aws_security_group" "ssh_open" {
     to_port     = 0
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+# Attached to the open security group, so SSH to it is reachable from anywhere.
+resource "aws_instance" "web" {
+  ami                    = "ami-12345678"
+  instance_type          = "t3.micro"
+  vpc_security_group_ids = [aws_security_group.ssh_open.id]
+
+  tags = {
+    Name = "ghostops-bad-web"
   }
 }
 

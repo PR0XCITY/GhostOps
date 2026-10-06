@@ -27,6 +27,7 @@ def test_bad_plan_lists_every_resource_as_create():
     assert sorted(c.address for c in changes) == [
         "aws_db_instance.unencrypted",
         "aws_iam_policy.admin_star",
+        "aws_instance.web",
         "aws_s3_bucket.public",
         "aws_s3_bucket_acl.public",
         "aws_s3_bucket_ownership_controls.public",

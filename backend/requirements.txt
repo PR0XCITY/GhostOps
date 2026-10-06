@@ -1,3 +1,4 @@
 # Install into the repo venv: .venv\Scripts\python.exe -m pip install -r backend\requirements.txt
 boto3>=1.40
+networkx>=3.3
 pytest>=8
