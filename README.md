@@ -126,7 +126,7 @@ Open a **new** terminal after installing tools so PATH is refreshed.
 ### Setup (once)
 
 ```powershell
-git clone <this repo> GhostOps
+git clone https://github.com/PR0XCITY/GhostOps.git
 cd GhostOps
 python -m venv .venv
 .venv\Scripts\python.exe -m pip install -e "backend[test]"
