@@ -8,6 +8,7 @@ keys/
 __pycache__/
 *.pyc
 .venv/
+.pytest_cache/
 
 # node / next
 node_modules/
@@ -19,6 +20,7 @@ node_modules/
 
 # terraform
 .terraform/
+.terraform-plugin-cache/
 *.tfstate*
 *.tfplan
 
