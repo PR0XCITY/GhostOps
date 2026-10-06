@@ -12,3 +12,6 @@ node_modules/
 *.tfstate
 *.tfstate.*
 keys/
+
+# third-party skill repo cloned in place (has its own .git)
+.claude/skills/awesome-design-md/
