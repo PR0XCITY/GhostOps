@@ -18,7 +18,10 @@ def ministack_up() -> bool:
         return False
 
 
-integration = pytest.mark.skipif(not ministack_up(), reason="MiniStack not running (docker compose up -d)")
+def integration(test):
+    """Real Terraform runs against MiniStack. Part of the slow `integration` set."""
+    skip = pytest.mark.skipif(not ministack_up(), reason="MiniStack not running (docker compose up -d)")
+    return pytest.mark.integration(skip(test))
 
 
 def client(service):

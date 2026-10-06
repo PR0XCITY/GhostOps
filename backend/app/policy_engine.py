@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -29,6 +28,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from app.plan_parser import PlanParseError, parse_plan
+from app.tools import find_tool
 
 RULES_DIR = Path(__file__).resolve().parent.parent / "rules"
 QUERY = "data.ghostops.result"
@@ -50,41 +50,13 @@ class Finding:
     decision: Decision
 
 
-def _registry_path() -> str | None:
-    """Current machine + user PATH from the Windows registry (None elsewhere)."""
-    if sys.platform != "win32":
-        return None
-    import winreg
-
-    parts = []
-    for root, key in (
-        (winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
-        (winreg.HKEY_CURRENT_USER, "Environment"),
-    ):
-        try:
-            with winreg.OpenKey(root, key) as handle:
-                value, _ = winreg.QueryValueEx(handle, "Path")
-        except OSError:
-            continue
-        parts.append(os.path.expandvars(value))
-    return os.pathsep.join(parts) or None
-
-
 def find_opa() -> str:
     configured = os.environ.get("GHOSTOPS_OPA_BIN")
-    if configured:
-        if not Path(configured).is_file():
-            raise PolicyEngineError(f"GHOSTOPS_OPA_BIN points to a missing file: {configured}")
-        return configured
-    on_path = shutil.which("opa")
-    if on_path:
-        return on_path
-    # A process started before OPA was installed has a stale PATH; the registry
-    # has the current one (what a fresh terminal would get).
-    fresh = _registry_path()
-    on_fresh_path = shutil.which("opa", path=fresh) if fresh else None
-    if on_fresh_path:
-        return on_fresh_path
+    if configured and not Path(configured).is_file():
+        raise PolicyEngineError(f"GHOSTOPS_OPA_BIN points to a missing file: {configured}")
+    found = find_tool("opa", "GHOSTOPS_OPA_BIN")
+    if found:
+        return found
     raise PolicyEngineError(
         "opa binary not found. Install it (winget install --id open-policy-agent.opa -e) "
         "or set GHOSTOPS_OPA_BIN to its full path."
