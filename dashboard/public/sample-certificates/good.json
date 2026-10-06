@@ -1,0 +1,111 @@
+{
+  "plan_id": "c07cd406c130978f0d0d432df7b4c81700f010eacd385f31122dfc957c88fa21",
+  "timestamp": "2026-10-06T15:05:11Z",
+  "resource_changes": [
+    {
+      "resource": "aws_cloudwatch_metric_alarm.bucket_size",
+      "action": "create",
+      "before": null,
+      "after": {
+        "actions_enabled": true,
+        "alarm_actions": null,
+        "alarm_description": "Logs bucket larger than 5 GB",
+        "alarm_name": "ghostops-good-logs-bucket-size",
+        "comparison_operator": "GreaterThanThreshold",
+        "datapoints_to_alarm": null,
+        "dimensions": {
+          "BucketName": "ghostops-good-logs-bucket",
+          "StorageType": "StandardStorage"
+        },
+        "evaluation_periods": 1,
+        "extended_statistic": null,
+        "insufficient_data_actions": null,
+        "metric_name": "BucketSizeBytes",
+        "metric_query": [],
+        "namespace": "AWS/S3",
+        "ok_actions": null,
+        "period": 86400,
+        "statistic": "Average",
+        "tags": {
+          "Owner": "platform-team",
+          "Project": "ghostops"
+        },
+        "tags_all": {
+          "Owner": "platform-team",
+          "Project": "ghostops"
+        },
+        "threshold": 5368709120,
+        "threshold_metric_id": null,
+        "treat_missing_data": "notBreaching",
+        "unit": null
+      }
+    },
+    {
+      "resource": "aws_s3_bucket.logs",
+      "action": "create",
+      "before": null,
+      "after": {
+        "bucket": "ghostops-good-logs-bucket",
+        "force_destroy": false,
+        "tags": {
+          "CostCenter": "cloud-arch-101",
+          "Environment": "dev",
+          "Owner": "platform-team",
+          "Project": "ghostops"
+        },
+        "tags_all": {
+          "CostCenter": "cloud-arch-101",
+          "Environment": "dev",
+          "Owner": "platform-team",
+          "Project": "ghostops"
+        },
+        "timeouts": null
+      }
+    }
+  ],
+  "blast_radius": {
+    "newly_public": [],
+    "iam_widened": [],
+    "risk_flags": [],
+    "graph": {
+      "nodes": [
+        {
+          "id": "aws_cloudwatch_metric_alarm.bucket_size",
+          "type": "aws_cloudwatch_metric_alarm",
+          "action": "create",
+          "risk": false,
+          "risk_reasons": []
+        },
+        {
+          "id": "aws_s3_bucket.logs",
+          "type": "aws_s3_bucket",
+          "action": "create",
+          "risk": false,
+          "risk_reasons": []
+        }
+      ],
+      "edges": [
+        {
+          "source": "aws_cloudwatch_metric_alarm.bucket_size",
+          "target": "aws_s3_bucket.logs",
+          "via": [
+            "dimensions"
+          ]
+        }
+      ]
+    }
+  },
+  "shadow_run": {
+    "applied": true,
+    "resources_created": 2,
+    "error": null
+  },
+  "cost_delta": {
+    "monthly_usd": 0.1,
+    "note": "Usage-based costs priced at zero usage, so the real cost may be higher: aws_s3_bucket.logs."
+  },
+  "verdict": "AUTO_APPROVED",
+  "risk_explanation": "The change was AUTO_APPROVED. No findings were identified, and the emulator test apply succeeded.",
+  "generated_by": "groq",
+  "signature": "29c61859b629f06ca4f24a7429463171ce37ec171dd5a37d862546a73cc877e4"
+}

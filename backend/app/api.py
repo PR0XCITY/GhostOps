@@ -11,6 +11,7 @@ GET  /certificates/{plan_id}/decisions   the audit log for that plan
 POST /certificates/{plan_id}/decision {"decision": "approve"|"deny", "reviewer": "...", "comment": "..."}
      recorded in the append-only audit log; NEVER applied to any real system
 GET  /verify/{plan_id}                re-check the stored certificate's signature
+GET  /demos, POST /analyze/demo/{bad|good}   run a bundled demo (no paths from the browser)
 GET  /health
 
 CORS allows the dashboard at http://localhost:3000. Request bodies and settings
@@ -40,6 +41,13 @@ DASHBOARD_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000"]
 MAX_PLAN_BYTES = 20 * 1024 * 1024
 PLAN_ID = PathParam(pattern=r"^[0-9a-f]{64}$", description="sha256 plan id")
 NO_APPLY_NOTE = "Recorded in the audit log only. GhostOps never applies changes to any real system."
+_ROOT = Path(__file__).resolve().parents[2]
+DEMOS = {  # name -> (plan JSON, Terraform dir for the shadow run, description)
+    "bad": (_ROOT / "backend" / "tests" / "fixtures" / "bad_plan.json", _ROOT / "demo" / "bad",
+            "Open SSH, wildcard IAM policy, public S3 bucket, unencrypted RDS, EC2 behind the open group"),
+    "good": (_ROOT / "backend" / "tests" / "fixtures" / "good_plan.json", _ROOT / "demo" / "good",
+             "Tagged S3 bucket with a CloudWatch size alarm"),
+}
 
 Analyzer = Callable[..., dict[str, Any]]
 
@@ -139,6 +147,22 @@ def create_app(store: Store | None = None, analyzer: Analyzer = build_certificat
             raise HTTPException(500, str(exc)) from None
         app.state.store.save_certificate(cert)
         log.info("analyzed plan %s verdict=%s", cert["plan_id"], cert["verdict"])
+        return cert
+
+    @app.get("/demos")
+    def list_demos() -> list[dict[str, str]]:
+        return [{"name": name, "description": desc} for name, (_, _, desc) in DEMOS.items()]
+
+    @app.post("/analyze/demo/{name}")
+    async def analyze_demo(name: str, use_groq: bool = True) -> dict[str, Any]:
+        """Run a bundled demo by name; the browser never sends file paths."""
+        if name not in DEMOS:
+            raise HTTPException(404, f"unknown demo {name!r}; choose one of {sorted(DEMOS)}")
+        plan_file, tf_dir, _ = DEMOS[name]
+        plan = _load_plan_file(str(plan_file))
+        cert = await run_in_threadpool(analyzer, plan, str(tf_dir), use_groq=use_groq)
+        app.state.store.save_certificate(cert)
+        log.info("analyzed demo %s plan %s verdict=%s", name, cert["plan_id"], cert["verdict"])
         return cert
 
     @app.get("/certificates")

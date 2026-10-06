@@ -119,6 +119,18 @@ def test_analyze_rejects_bad_input(client, kwargs, status, detail):
     assert detail in r.json()["detail"]
 
 
+def test_demos(client, analyzer):
+    assert [d["name"] for d in client.get("/demos").json()] == ["bad", "good"]
+    bad = client.post("/analyze/demo/bad?use_groq=false")
+    assert bad.status_code == 200 and bad.json()["verdict"] == "BLOCKED_PENDING_REVIEW"
+    assert analyzer.calls[-1] == {"tf_dir": str(BACKEND.parent / "demo" / "bad"), "use_groq": False}
+    good = client.post("/analyze/demo/good")
+    assert good.json()["verdict"] == "AUTO_APPROVED"
+    assert client.get(f"/certificates/{good.json()['plan_id']}").status_code == 200
+    assert client.post("/analyze/demo/..%2F..%2Fetc").status_code == 404
+    assert client.post("/analyze/demo/evil").status_code == 404
+
+
 # --- /certificates ----------------------------------------------------------------------------
 
 

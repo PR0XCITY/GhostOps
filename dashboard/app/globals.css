@@ -1,0 +1,52 @@
+@import "tailwindcss";
+
+/* GhostOps console theme: dark only (theme lock), zinc neutrals, one interactive
+   accent (cyan). Status colours are semantic and never decorative. */
+@theme inline {
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --color-canvas: #09090b;
+  --color-surface: #111113;
+  --color-raised: #18181b;
+  --color-line: rgb(255 255 255 / 0.08);
+  --color-line-strong: rgb(255 255 255 / 0.14);
+  --ease-snap: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--color-canvas);
+  color: #e4e4e7;
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+::selection {
+  background: rgb(34 211 238 / 0.3);
+}
+
+/* Skeleton shimmer for loading states; disabled for reduced motion. */
+@keyframes shimmer {
+  from { background-position: -400px 0; }
+  to { background-position: 400px 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, #18181b 0%, #232327 50%, #18181b 100%);
+  background-size: 800px 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; }
+  * { transition-duration: 0ms !important; }
+}
+
+/* React Flow on a dark canvas */
+.react-flow__attribution { display: none; }
+.react-flow__controls-button {
+  background: #18181b;
+  border-bottom-color: rgb(255 255 255 / 0.08);
+  fill: #a1a1aa;
+}
+.react-flow__controls-button:hover { background: #232327; }
