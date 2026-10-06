@@ -9,7 +9,9 @@ import "@xyflow/react/dist/style.css";
 import type { GraphEdge, GraphNode } from "@/lib/types";
 import { resourceType } from "@/lib/format";
 
-const COL_WIDTH = 290;
+// 230px nodes + 170px gap: labels scale with zoom, so the gap must exceed the
+// widest label ("vpc_security_group_ids" is about 132px) at any zoom level
+const COL_WIDTH = 400;
 const ROW_HEIGHT = 96;
 const REASON_LABEL: Record<string, string> = {
   public_exposure: "public",
@@ -104,16 +106,21 @@ export function ResourceGraph({ nodes, edges }: { nodes: GraphNode[]; edges: Gra
   if (nodes.length === 0) {
     return <p className="px-4 py-10 text-sm text-zinc-500">No resources remain after this change.</p>;
   }
+  const flagged = nodes.filter((n) => n.risk).length;
   return (
-    <div className="h-[440px] w-full">
+    <div
+      className="h-[440px] w-full"
+      role="img"
+      aria-label={`Resource graph: ${nodes.length} resources, ${edges.length} references, ${flagged} flagged as risky. The same resources are listed under Resource Changes.`}
+    >
       <ReactFlow
         nodes={rfNodes}
         edges={rfEdges}
         nodeTypes={nodeTypes}
         fitView
-        fitViewOptions={{ padding: 0.2 }}
+        fitViewOptions={{ padding: 0.2, maxZoom: 1 }}
         minZoom={0.3}
-        proOptions={{ hideAttribution: true }}
+        maxZoom={2}
         colorMode="dark"
         nodesConnectable={false}
       >

@@ -1,22 +1,26 @@
 import type { Severity } from "./types";
 import { SEVERITIES } from "./types";
 
+const usd = new Intl.NumberFormat(undefined, {
+  style: "currency", currency: "USD", currencyDisplay: "narrowSymbol", signDisplay: "exceptZero",
+  minimumFractionDigits: 2, maximumFractionDigits: 2,
+});
+
+const dateTime = new Intl.DateTimeFormat(undefined, {
+  year: "numeric", month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit",
+});
+
 export function formatUsd(value: number | null): string {
-  if (value === null) return "n/a";
-  const sign = value > 0 ? "+" : value < 0 ? "-" : "";
-  return `${sign}$${Math.abs(value).toFixed(2)}`;
+  return value === null ? "n/a" : usd.format(value);
 }
 
 export function formatTimestamp(iso: string): string {
   const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  return date.toLocaleString(undefined, {
-    year: "numeric", month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit",
-  });
+  return Number.isNaN(date.getTime()) ? iso : dateTime.format(date);
 }
 
 export function shortHash(hash: string, length = 12): string {
-  return hash.length > length ? `${hash.slice(0, length)}` : hash;
+  return hash.length > length ? hash.slice(0, length) : hash;
 }
 
 export function topSeverity(counts: Record<Severity, number>): Severity | null {

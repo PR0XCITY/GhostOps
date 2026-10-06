@@ -19,14 +19,14 @@ export function VerdictBadge({ verdict, size = "sm" }: { verdict: Verdict; size?
         blocked ? "border-red-500/50 bg-red-500/15 text-red-300" : "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
       }`}
     >
-      {blocked ? <Prohibit size={14} weight="bold" /> : <CheckCircle size={14} weight="bold" />}
+      {blocked ? <Prohibit size={14} weight="bold" aria-hidden="true" /> : <CheckCircle size={14} weight="bold" aria-hidden="true" />}
       {blocked ? "Blocked" : "Auto-approved"}
     </span>
   );
 }
 
 export function SeverityBadge({ severity }: { severity: Severity | null }) {
-  if (!severity) return <span className="font-mono text-xs text-zinc-600">none</span>;
+  if (!severity) return <span className="font-mono text-xs text-zinc-500">none</span>;
   return (
     <span className={`inline-flex rounded border px-1.5 py-0.5 font-mono text-[11px] font-medium ${SEVERITY_STYLE[severity].chip}`}>
       {severity}
@@ -36,13 +36,13 @@ export function SeverityBadge({ severity }: { severity: Severity | null }) {
 
 export function SignatureBadge({ state }: { state: "verified" | "invalid" | "checking" | "unavailable" }) {
   const styles = {
-    verified: { cls: "border-emerald-500/40 bg-emerald-500/10 text-emerald-300", icon: <SealCheck size={14} weight="bold" />, label: "Signature verified" },
-    invalid: { cls: "border-red-500/50 bg-red-500/15 text-red-300", icon: <SealWarning size={14} weight="bold" />, label: "Signature INVALID" },
-    checking: { cls: "border-line bg-raised text-zinc-400", icon: <Question size={14} />, label: "Verifying..." },
-    unavailable: { cls: "border-line bg-raised text-zinc-400", icon: <Question size={14} />, label: "Not verifiable in demo mode" },
+    verified: { cls: "border-emerald-500/40 bg-emerald-500/10 text-emerald-300", icon: <SealCheck size={14} weight="bold" aria-hidden="true" />, label: "Signature verified" },
+    invalid: { cls: "border-red-500/50 bg-red-500/15 text-red-300", icon: <SealWarning size={14} weight="bold" aria-hidden="true" />, label: "Signature INVALID" },
+    checking: { cls: "border-line bg-raised text-zinc-400", icon: <Question size={14} aria-hidden="true" />, label: "Verifying…" },
+    unavailable: { cls: "border-line bg-raised text-zinc-400", icon: <Question size={14} aria-hidden="true" />, label: "Not verifiable in demo mode" },
   }[state];
   return (
-    <span className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded border px-2 py-0.5 text-xs font-medium ${styles.cls}`}>
+    <span className={`inline-flex w-max items-center gap-1.5 whitespace-nowrap rounded border px-2 py-0.5 text-xs font-medium ${styles.cls}`}>
       {styles.icon}
       {styles.label}
     </span>

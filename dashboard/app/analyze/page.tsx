@@ -70,7 +70,7 @@ export default function AnalyzePage() {
   return (
     <div className="flex max-w-4xl flex-col gap-6">
       <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight text-zinc-50">New analysis</h1>
+        <h1 className="text-balance text-2xl font-semibold tracking-tight text-zinc-50">New Analysis</h1>
         <p className="text-sm text-zinc-400">Run a bundled Terraform demo through the full GhostOps pipeline.</p>
       </div>
 
@@ -82,13 +82,13 @@ export default function AnalyzePage() {
           return (
             <label
               key={d.name}
-              className={`flex cursor-pointer flex-col gap-2 rounded-md border px-4 py-4 transition-colors duration-150 ease-[var(--ease-snap)] ${
+              className={`flex cursor-pointer flex-col gap-2 rounded-md border px-4 py-4 transition-colors duration-150 ease-[var(--ease-snap)] focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-cyan-400 ${
                 selected ? "border-cyan-400/70 bg-cyan-400/[0.05]" : "border-line bg-surface hover:border-line-strong"
               }`}
             >
               <input type="radio" name="demo" value={d.name} checked={selected} onChange={() => setChoice(d.name)} className="sr-only" />
               <span className="flex items-center gap-2">
-                <Icon size={18} weight="bold" className={d.tone} />
+                <Icon size={18} weight="bold" className={d.tone} aria-hidden="true" />
                 <span className="font-medium text-zinc-100">{d.title}</span>
                 <span className="ml-auto font-mono text-xs text-zinc-500">demo/{d.name}</span>
               </span>
@@ -103,7 +103,7 @@ export default function AnalyzePage() {
         <div className="flex flex-col gap-3 rounded-md border border-amber-400/30 bg-amber-400/[0.06] px-4 py-4">
           <p className="text-sm text-amber-200">Running an analysis needs the GhostOps API, which is not reachable (demo mode).</p>
           <Link href="/" className="flex w-max items-center gap-1.5 text-sm text-cyan-300 hover:text-cyan-200">
-            View the sample certificates <ArrowRight size={14} />
+            View Sample Certificates <ArrowRight size={14} aria-hidden="true" />
           </Link>
         </div>
       ) : (
@@ -114,7 +114,7 @@ export default function AnalyzePage() {
             disabled={running || mode !== "live"}
             className="flex items-center gap-2 rounded-md bg-cyan-400 px-4 py-2.5 text-sm font-medium text-zinc-950 transition-colors duration-150 ease-[var(--ease-snap)] hover:bg-cyan-300 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <Play size={16} weight="fill" /> {running ? "Running..." : "Run analysis"}
+            <Play size={16} weight="fill" aria-hidden="true" /> {running ? "Running…" : "Run Analysis"}
           </button>
           {running && (
             <span className="font-mono text-sm tabular-nums text-zinc-400" aria-live="polite">
@@ -141,7 +141,14 @@ export default function AnalyzePage() {
         </div>
       )}
 
-      {error && <ErrorState title="Analysis failed" detail={error} onRetry={() => void run()} />}
+      {error && (
+        <ErrorState
+          title="Analysis failed"
+          detail={error}
+          hint="Check that the API and MiniStack are running (python -m app.server, docker compose up -d), then retry."
+          onRetry={() => void run()}
+        />
+      )}
     </div>
   );
 }

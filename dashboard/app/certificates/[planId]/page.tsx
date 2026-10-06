@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ArrowLeft, CheckCircle, Prohibit, Siren, ShieldCheck } from "@phosphor-icons/react";
 import { ResourceGraph } from "@/components/ResourceGraph";
 import { SEVERITY_STYLE, SignatureBadge, VerdictBadge } from "@/components/badges";
@@ -18,7 +18,7 @@ function Panel({ title, children, className = "", tone = "neutral" }: {
 }) {
   const alarm = tone === "alarm";
   return (
-    <section className={`overflow-hidden rounded-md border ${alarm ? "border-red-500/60 bg-red-500/[0.06]" : "border-line bg-surface"} ${className}`}>
+    <section className={`min-w-0 overflow-hidden rounded-md border ${alarm ? "border-red-500/60 bg-red-500/[0.06]" : "border-line bg-surface"} ${className}`}>
       <h2 className={`flex items-center gap-2 border-b px-4 py-2.5 text-sm font-medium ${alarm ? "border-red-500/40 text-red-200" : "border-line text-zinc-300"}`}>
         {title}
       </h2>
@@ -39,12 +39,12 @@ function VerdictBanner({ cert }: { cert: Certificate }) {
       }`}
     >
       <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-md ${blocked ? "bg-red-500/20 text-red-300" : "bg-emerald-500/15 text-emerald-300"}`}>
-        {blocked ? <Prohibit size={28} weight="bold" /> : <ShieldCheck size={28} weight="bold" />}
+        {blocked ? <Prohibit size={28} weight="bold" aria-hidden="true" /> : <ShieldCheck size={28} weight="bold" aria-hidden="true" />}
       </div>
       <div className="flex flex-col gap-1">
-        <p className={`font-mono text-xl font-semibold tracking-tight ${blocked ? "text-red-200" : "text-emerald-200"}`}>
+        <h1 className={`font-mono text-xl font-semibold tracking-tight ${blocked ? "text-red-200" : "text-emerald-200"}`}>
           {blocked ? "BLOCKED PENDING REVIEW" : "AUTO-APPROVED"}
-        </p>
+        </h1>
         <p className={`text-sm ${blocked ? "text-red-200/80" : "text-emerald-200/80"}`}>
           {blocked
             ? crit + high > 0
@@ -62,25 +62,25 @@ function BlastRadius({ cert }: { cert: Certificate }) {
   const count = newly_public.length + iam_widened.length;
   if (count === 0) {
     return (
-      <Panel title={<><ShieldCheck size={16} className="text-emerald-400" /> Blast radius</>}>
+      <Panel title={<><ShieldCheck size={16} className="text-emerald-400" aria-hidden="true" /> Blast Radius</>}>
         <p className="px-4 py-4 text-sm text-zinc-400">No resource becomes reachable from the internet and no IAM permission widens.</p>
       </Panel>
     );
   }
   return (
-    <Panel tone="alarm" title={<><Siren size={16} weight="fill" className="text-red-400" /> Blast radius: {count} risk{count === 1 ? "" : "s"}</>}>
+    <Panel tone="alarm" title={<><Siren size={16} weight="fill" className="text-red-400" aria-hidden="true" /> Blast Radius: {count} Risk{count === 1 ? "" : "s"}</>}>
       <ul className="divide-y divide-red-500/20">
         {newly_public.map((p) => (
-          <li key={`pub-${p.address}`} className="flex flex-col gap-0.5 px-4 py-3">
-            <span className="font-mono text-sm text-red-100">{p.address}</span>
+          <li key={`pub-${p.address}`} className="flex min-w-0 flex-col gap-0.5 px-4 py-3">
+            <span className="break-all font-mono text-sm text-red-100" translate="no">{p.address}</span>
             <span className="text-xs text-red-200/80">
-              Newly reachable from 0.0.0.0/0 via <span className="font-mono">{p.via.join(", ")}</span>
+              Newly reachable from 0.0.0.0/0 via <span className="break-all font-mono" translate="no">{p.via.join(", ")}</span>
             </span>
           </li>
         ))}
         {iam_widened.map((w) => (
-          <li key={`iam-${w.address}`} className="flex flex-col gap-0.5 px-4 py-3">
-            <span className="font-mono text-sm text-red-100">{w.address}</span>
+          <li key={`iam-${w.address}`} className="flex min-w-0 flex-col gap-0.5 px-4 py-3">
+            <span className="break-all font-mono text-sm text-red-100" translate="no">{w.address}</span>
             <span className="text-xs text-red-200/80">
               {w.unknown
                 ? "IAM policy only known after apply: cannot be checked"
@@ -98,20 +98,20 @@ function BlastRadius({ cert }: { cert: Certificate }) {
 function RiskFlags({ cert }: { cert: Certificate }) {
   const flags = cert.blast_radius.risk_flags;
   return (
-    <Panel title={<>Risk flags <span className="font-mono text-xs text-zinc-500">{flags.length}</span></>}>
+    <Panel title={<>Risk Flags <span className="font-mono text-xs text-zinc-500">{flags.length}</span></>}>
       {flags.length === 0 ? (
         <p className="px-4 py-4 text-sm text-zinc-400">No policy, exposure, IAM or shadow-run findings.</p>
       ) : (
         <ul className="divide-y divide-line">
           {flags.map((f, i) => (
-            <li key={`${f.rule}-${f.resource}-${i}`} className="grid grid-cols-[4px_1fr] gap-x-3 px-4 py-3">
-              <span className={`row-span-2 rounded-full ${SEVERITY_STYLE[f.severity].bar}`} aria-hidden />
+            <li key={`${f.rule}-${f.resource}-${i}`} className="grid grid-cols-[4px_minmax(0,1fr)] gap-x-3 px-4 py-3">
+              <span className={`row-span-2 rounded-full ${SEVERITY_STYLE[f.severity].bar}`} aria-hidden="true" />
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <span className={`font-mono text-xs font-semibold ${SEVERITY_STYLE[f.severity].text}`}>{f.severity}</span>
-                <span className="font-mono text-xs text-zinc-400">{f.rule}</span>
-                <span className="font-mono text-xs text-zinc-200">{f.resource}</span>
+                <span className="font-mono text-xs text-zinc-400" translate="no">{f.rule}</span>
+                <span className="break-all font-mono text-xs text-zinc-200" translate="no">{f.resource}</span>
               </div>
-              <p className="text-sm leading-relaxed text-zinc-300">{f.message}</p>
+              <p className="break-words text-sm leading-relaxed text-zinc-300">{f.message}</p>
             </li>
           ))}
         </ul>
@@ -132,7 +132,7 @@ function Facts({ cert }: { cert: Certificate }) {
             {formatUsd(cost.monthly_usd)}
             {cost.monthly_usd !== null && <span className="text-sm font-normal text-zinc-500"> /month</span>}
           </dd>
-          {cost.note && <p className="text-xs leading-relaxed text-zinc-500">{cost.note}</p>}
+          {cost.note && <p className="break-words text-xs leading-relaxed text-zinc-500">{cost.note}</p>}
         </div>
         <div className="flex flex-col gap-1 px-4 py-3">
           <dt className="text-xs text-zinc-500">Shadow run on MiniStack</dt>
@@ -147,7 +147,7 @@ function Facts({ cert }: { cert: Certificate }) {
             {counts.map(({ s, n }) => (
               <div key={s} className="flex flex-col">
                 <span className={`font-mono text-lg tabular-nums ${n ? SEVERITY_STYLE[s].text : "text-zinc-600"}`}>{n}</span>
-                <span className="text-[10px] text-zinc-500">{s.toLowerCase()}</span>
+                <span className="text-[11px] text-zinc-500">{s.toLowerCase()}</span>
               </div>
             ))}
           </dd>
@@ -165,26 +165,36 @@ function DecisionPanel({ detail, demo, onDecided }: { detail: CertificateDetail;
   const { cert, verify, decisions } = detail;
   const [reviewer, setReviewer] = useState("");
   const [comment, setComment] = useState("");
-  const [busy, setBusy] = useState<"approve" | "deny" | null>(null);
+  const [pending, setPending] = useState<"approve" | "deny" | null>(null); // awaiting confirmation
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const reviewerRef = useRef<HTMLInputElement>(null);
   const blocked = cert.verdict === "BLOCKED_PENDING_REVIEW";
   const invalid = verify !== null && !verify.valid;
-  const disabled = demo || invalid || busy !== null;
+  const disabled = demo || invalid || busy;
 
-  async function decide(decision: "approve" | "deny") {
+  function request(decision: "approve" | "deny") {
     if (!reviewer.trim()) {
-      setError("Enter your name as the reviewer first.");
+      setError("Enter your name as the reviewer, then choose Approve or Deny.");
+      reviewerRef.current?.focus();
       return;
     }
-    setBusy(decision);
+    setError(null);
+    setPending(decision); // decisions are permanent (append-only log): ask once more
+  }
+
+  async function confirm() {
+    if (!pending) return;
+    setBusy(true);
     setError(null);
     try {
-      onDecided(await api.decide(cert.plan_id, decision, reviewer.trim(), comment.trim()));
+      onDecided(await api.decide(cert.plan_id, pending, reviewer.trim(), comment.trim()));
       setComment("");
+      setPending(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(`${err instanceof Error ? err.message : String(err)}. Check the API is running and try again.`);
     } finally {
-      setBusy(null);
+      setBusy(false);
     }
   }
 
@@ -198,69 +208,118 @@ function DecisionPanel({ detail, demo, onDecided }: { detail: CertificateDetail;
             <label htmlFor="reviewer" className="text-xs text-zinc-400">Reviewer</label>
             <input
               id="reviewer"
+              name="reviewer"
+              ref={reviewerRef}
               value={reviewer}
               onChange={(e) => setReviewer(e.target.value)}
+              autoComplete="name"
+              spellCheck={false}
               maxLength={100}
+              placeholder="e.g. Ana Lee…"
               disabled={disabled}
-              className="rounded-md border border-line-strong bg-canvas px-3 py-2 text-sm text-zinc-100 outline-none transition-colors focus:border-cyan-400 disabled:opacity-50"
+              aria-invalid={error !== null && !reviewer.trim()}
+              aria-describedby={error ? "decision-error" : undefined}
+              className="rounded-md border border-line-strong bg-canvas px-3 py-2 text-sm text-zinc-100 transition-colors duration-150 placeholder:text-zinc-500 focus-visible:border-cyan-400 disabled:opacity-50"
             />
           </div>
           <div className="flex flex-col gap-1.5">
             <label htmlFor="comment" className="text-xs text-zinc-400">Comment (optional)</label>
             <textarea
               id="comment"
+              name="comment"
               value={comment}
               onChange={(e) => setComment(e.target.value)}
+              autoComplete="off"
               maxLength={1000}
               rows={2}
+              placeholder="e.g. SSH must stay private…"
               disabled={disabled}
-              className="resize-none rounded-md border border-line-strong bg-canvas px-3 py-2 text-sm text-zinc-100 outline-none transition-colors focus:border-cyan-400 disabled:opacity-50"
+              className="resize-none rounded-md border border-line-strong bg-canvas px-3 py-2 text-sm text-zinc-100 transition-colors duration-150 placeholder:text-zinc-500 focus-visible:border-cyan-400 disabled:opacity-50"
             />
           </div>
-          {error && <p role="alert" className="text-xs text-red-300">{error}</p>}
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              type="button"
-              onClick={() => void decide("approve")}
-              disabled={disabled}
-              className="flex items-center justify-center gap-1.5 rounded-md border border-emerald-500/60 px-3 py-2 text-sm font-medium text-emerald-300 transition-colors duration-150 ease-[var(--ease-snap)] hover:bg-emerald-500/10 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              <CheckCircle size={16} weight="bold" /> {busy === "approve" ? "Saving..." : "Approve"}
-            </button>
-            <button
-              type="button"
-              onClick={() => void decide("deny")}
-              disabled={disabled}
-              className="flex items-center justify-center gap-1.5 rounded-md bg-red-500 px-3 py-2 text-sm font-medium text-white transition-colors duration-150 ease-[var(--ease-snap)] hover:bg-red-400 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              <Prohibit size={16} weight="bold" /> {busy === "deny" ? "Saving..." : "Deny"}
-            </button>
-          </div>
+          <p id="decision-error" role="alert" aria-live="polite" className="text-xs text-red-300 empty:hidden">{error ?? ""}</p>
+          {pending ? (
+            <div className="flex flex-col gap-2 rounded-md border border-line-strong bg-raised px-3 py-3">
+              <p className="text-sm text-zinc-200">
+                {pending === "approve" ? "Approve" : "Deny"} as <span className="font-medium">{reviewer.trim()}</span>? This is
+                recorded permanently.
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPending(null)}
+                  disabled={busy}
+                  className="rounded-md border border-line-strong px-3 py-2 text-sm text-zinc-200 transition-colors duration-150 hover:bg-white/5 active:translate-y-px disabled:opacity-40"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void confirm()}
+                  disabled={busy}
+                  className={`rounded-md px-3 py-2 text-sm font-medium transition-colors duration-150 active:translate-y-px disabled:opacity-60 ${
+                    pending === "approve" ? "bg-emerald-500 text-zinc-950 hover:bg-emerald-400" : "bg-red-500 text-white hover:bg-red-400"
+                  }`}
+                >
+                  {busy ? "Saving…" : pending === "approve" ? "Confirm Approve" : "Confirm Deny"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => request("approve")}
+                disabled={disabled}
+                className="flex items-center justify-center gap-1.5 rounded-md border border-emerald-500/60 px-3 py-2 text-sm font-medium text-emerald-300 transition-colors duration-150 ease-[var(--ease-snap)] hover:bg-emerald-500/10 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <CheckCircle size={16} weight="bold" aria-hidden="true" /> Approve
+              </button>
+              <button
+                type="button"
+                onClick={() => request("deny")}
+                disabled={disabled}
+                className="flex items-center justify-center gap-1.5 rounded-md bg-red-500 px-3 py-2 text-sm font-medium text-white transition-colors duration-150 ease-[var(--ease-snap)] hover:bg-red-400 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <Prohibit size={16} weight="bold" aria-hidden="true" /> Deny
+              </button>
+            </div>
+          )}
           <p className="text-[11px] leading-relaxed text-zinc-500">
             Decisions go to the append-only audit log. GhostOps never applies changes to any real system.
           </p>
         </div>
       )}
       <div className={blocked ? "border-t border-line" : ""}>
-        <p className="px-4 pt-3 text-xs text-zinc-500">Audit log</p>
-        {decisions.length === 0 ? (
-          <p className="px-4 pb-4 pt-1 text-sm text-zinc-500">{blocked ? "No decision yet." : "Auto-approved: no review needed."}</p>
-        ) : (
-          <ul className="divide-y divide-line pb-1">
-            {decisions.map((d) => (
-              <li key={d.id} className="flex flex-col gap-0.5 px-4 py-2.5">
-                <span className="flex items-center gap-2 text-sm">
-                  <span className={`font-medium ${d.decision === "approve" ? "text-emerald-300" : "text-red-300"}`}>
-                    {d.decision === "approve" ? "Approved" : "Denied"}
-                  </span>
-                  <span className="text-zinc-300">by {d.reviewer}</span>
-                </span>
-                <span className="font-mono text-[11px] text-zinc-500">{formatTimestamp(d.decided_at)}</span>
-                {d.comment && <span className="text-xs text-zinc-400">{d.comment}</span>}
-              </li>
-            ))}
-          </ul>
-        )}
+        <h3 className="px-4 pt-3 text-xs font-normal text-zinc-500">Audit Log</h3>
+        <div aria-live="polite">
+          {decisions.length === 0 ? (
+            <p className="px-4 pb-4 pt-1 text-sm text-zinc-500">{blocked ? "No decision yet." : "Auto-approved: no review needed."}</p>
+          ) : (
+            <ul className="divide-y divide-line pb-1">
+              {decisions.map((d) => {
+                const earlier = d.certificate_signature !== cert.signature;
+                return (
+                  <li key={d.id} className={`flex min-w-0 flex-col gap-0.5 px-4 py-2.5 ${earlier ? "opacity-60" : ""}`}>
+                    <span className="flex flex-wrap items-center gap-x-2 text-sm">
+                      <span className={`font-medium ${d.decision === "approve" ? "text-emerald-300" : "text-red-300"}`}>
+                        {d.decision === "approve" ? "Approved" : "Denied"}
+                      </span>
+                      <span className="break-all text-zinc-300">by {d.reviewer}</span>
+                      {earlier && (
+                        <span className="rounded border border-line-strong px-1 font-mono text-[10px] text-zinc-400" title="Made on a previous analysis of this plan">
+                          earlier version
+                        </span>
+                      )}
+                    </span>
+                    <span className="font-mono text-[11px] text-zinc-500">{formatTimestamp(d.decided_at)}</span>
+                    {d.comment && <span className="break-words text-xs text-zinc-400">{d.comment}</span>}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
       </div>
     </Panel>
   );
@@ -271,16 +330,16 @@ function ResourceChanges({ cert }: { cert: Certificate }) {
     create: "text-emerald-300", update: "text-amber-200", delete: "text-red-300", replace: "text-orange-300", "no-op": "text-zinc-500",
   };
   return (
-    <Panel title={<>Resource changes <span className="font-mono text-xs text-zinc-500">{cert.resource_changes.length}</span></>}>
+    <Panel title={<>Resource Changes <span className="font-mono text-xs text-zinc-500">{cert.resource_changes.length}</span></>}>
       <ul className="divide-y divide-line">
         {cert.resource_changes.map((rc) => (
           <li key={rc.resource}>
             <details className="group">
-              <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-2.5 hover:bg-raised/60">
-                <span className={`w-16 font-mono text-xs ${tone[rc.action] ?? "text-zinc-400"}`}>{rc.action}</span>
-                <span className="font-mono text-sm text-zinc-200">{rc.resource}</span>
+              <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-2.5 transition-colors duration-150 hover:bg-raised/60">
+                <span className={`w-16 shrink-0 font-mono text-xs ${tone[rc.action] ?? "text-zinc-400"}`}>{rc.action}</span>
+                <span className="min-w-0 break-all font-mono text-sm text-zinc-200" translate="no">{rc.resource}</span>
               </summary>
-              <pre className="max-h-80 overflow-auto border-t border-line bg-canvas px-4 py-3 font-mono text-xs leading-relaxed text-zinc-400">
+              <pre className="max-h-80 overflow-auto border-t border-line bg-canvas px-4 py-3 font-mono text-xs leading-relaxed text-zinc-400" translate="no">
                 {JSON.stringify(rc.after ?? rc.before, null, 2)}
               </pre>
             </details>
@@ -297,7 +356,7 @@ export default function CertificatePage() {
 
   if (state.status === "loading" || mode === "checking") {
     return (
-      <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-4" aria-busy="true" aria-label="Loading certificate">
         <SkeletonBlock className="h-6 w-64" />
         <SkeletonBlock className="h-24" />
         <SkeletonBlock className="h-20" />
@@ -312,9 +371,15 @@ export default function CertificatePage() {
     return (
       <div className="flex flex-col gap-4">
         <Link href="/" className="flex w-max items-center gap-1.5 text-sm text-zinc-400 hover:text-zinc-100">
-          <ArrowLeft size={14} /> Certificates
+          <ArrowLeft size={14} aria-hidden="true" /> Certificates
         </Link>
-        <ErrorState title="Could not load this certificate" detail={state.error} onRetry={() => void reload()} />
+        <h1 className="text-xl font-semibold text-zinc-100">Certificate Unavailable</h1>
+        <ErrorState
+          title="Could not load this certificate"
+          detail={state.error}
+          hint="Check the plan id in the address bar, or go back to the certificate list."
+          onRetry={() => void reload()}
+        />
       </div>
     );
   }
@@ -326,10 +391,10 @@ export default function CertificatePage() {
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <Link href="/" className="flex items-center gap-1.5 text-sm text-zinc-400 hover:text-zinc-100">
-          <ArrowLeft size={14} /> Certificates
+        <Link href="/" className="flex items-center gap-1.5 text-sm text-zinc-400 transition-colors duration-150 hover:text-zinc-100">
+          <ArrowLeft size={14} aria-hidden="true" /> Certificates
         </Link>
-        <span className="font-mono text-xs text-zinc-500" title={cert.plan_id}>plan {cert.plan_id}</span>
+        <span className="min-w-0 break-all font-mono text-xs text-zinc-500" title={cert.plan_id} translate="no">plan {cert.plan_id}</span>
         <span className="font-mono text-xs text-zinc-500">{formatTimestamp(cert.timestamp)}</span>
         <div className="ml-auto flex items-center gap-2">
           <VerdictBadge verdict={cert.verdict} />
@@ -340,22 +405,22 @@ export default function CertificatePage() {
       <VerdictBanner cert={cert} />
 
       <div className="flex flex-col gap-2">
-        <p className="max-w-[80ch] text-xl leading-relaxed text-zinc-100 md:text-2xl md:leading-relaxed">{cert.risk_explanation}</p>
+        <p className="max-w-[80ch] text-pretty text-xl leading-relaxed text-zinc-100 md:text-2xl md:leading-relaxed">{cert.risk_explanation}</p>
         <p className="font-mono text-[11px] text-zinc-500">
           explanation: {cert.generated_by === "groq" ? "Groq (from sanitized findings only)" : "template"}
         </p>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <div className="flex flex-col gap-4 lg:col-span-2">
+        <div className="flex min-w-0 flex-col gap-4 lg:col-span-2">
           <BlastRadius cert={cert} />
-          <Panel title="Resource graph (after this change)">
+          <Panel title="Resource Graph (After This Change)">
             <ResourceGraph nodes={cert.blast_radius.graph.nodes} edges={cert.blast_radius.graph.edges} />
           </Panel>
           <RiskFlags cert={cert} />
           <ResourceChanges cert={cert} />
         </div>
-        <div className="flex flex-col gap-4">
+        <div className="flex min-w-0 flex-col gap-4">
           <DecisionPanel
             detail={detail}
             demo={mode === "demo"}
@@ -365,7 +430,7 @@ export default function CertificatePage() {
           <Panel title="Signature">
             <div className="flex flex-col gap-2 px-4 py-3">
               <SignatureBadge state={signature} />
-              <p className="break-all font-mono text-[11px] text-zinc-500">HMAC-SHA256 {cert.signature}</p>
+              <p className="break-all font-mono text-[11px] text-zinc-500" translate="no">HMAC-SHA256 {cert.signature}</p>
             </div>
           </Panel>
         </div>

@@ -15,6 +15,18 @@
 
 :root {
   color-scheme: dark;
+  /* keep focused elements clear of the sticky 56px header */
+  scroll-padding-top: 72px;
+}
+
+/* One visible keyboard focus style everywhere (never removed without replacement). */
+:focus-visible {
+  outline: 2px solid #22d3ee;
+  outline-offset: 2px;
+}
+
+button, a, summary, label, input, textarea {
+  touch-action: manipulation;
 }
 
 body {
@@ -43,7 +55,9 @@ body {
 }
 
 /* React Flow on a dark canvas */
-.react-flow__attribution { display: none; }
+/* Keep React Flow's attribution (required without a Pro plan), styled to fit. */
+.react-flow__attribution { background: transparent !important; }
+.react-flow__attribution a { color: #52525b !important; font-size: 10px; }
 .react-flow__controls-button {
   background: #18181b;
   border-bottom-color: rgb(255 255 255 / 0.08);
