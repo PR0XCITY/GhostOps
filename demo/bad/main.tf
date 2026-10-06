@@ -2,6 +2,7 @@
 #   1. Security group with SSH (22) open to 0.0.0.0/0
 #   2. IAM policy allowing Action * on Resource *
 #   3. S3 bucket made public-read (ACL + public access block disabled)
+#   4. RDS instance without storage encryption
 # Provider points at MiniStack with fake credentials. Never real AWS.
 
 terraform {
@@ -31,6 +32,7 @@ provider "aws" {
   endpoints {
     ec2 = var.ministack_endpoint
     iam = var.ministack_endpoint
+    rds = var.ministack_endpoint
     s3  = var.ministack_endpoint
     sts = var.ministack_endpoint
   }
@@ -99,4 +101,17 @@ resource "aws_s3_bucket_acl" "public" {
     aws_s3_bucket_ownership_controls.public,
     aws_s3_bucket_public_access_block.public,
   ]
+}
+
+resource "aws_db_instance" "unencrypted" {
+  identifier          = "ghostops-bad-unencrypted-db"
+  engine              = "postgres"
+  instance_class      = "db.t3.micro"
+  allocated_storage   = 20
+  username            = "ghostops"
+  storage_encrypted   = false
+  skip_final_snapshot = true
+
+  # Password lives in Secrets Manager, so none appears in config or plan JSON.
+  manage_master_user_password = true
 }

@@ -25,6 +25,7 @@ def by_address(changes: list[ResourceChange]) -> dict[str, ResourceChange]:
 def test_bad_plan_lists_every_resource_as_create():
     changes = load_plan(FIXTURES / "bad_plan.json")
     assert sorted(c.address for c in changes) == [
+        "aws_db_instance.unencrypted",
         "aws_iam_policy.admin_star",
         "aws_s3_bucket.public",
         "aws_s3_bucket_acl.public",
