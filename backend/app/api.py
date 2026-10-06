@@ -1,0 +1,172 @@
+"""GhostOps HTTP API (FastAPI). Start it with:  python -m app.server
+
+POST /analyze                         analyse a plan, store + return its certificate
+     JSON  {"plan_path": "...", "tf_dir": "...", "use_groq": true}
+           or {"plan": {...plan JSON...}, "tf_dir": ..., "use_groq": ...}
+     multipart: file field "plan" (+ optional form fields tf_dir, use_groq)
+     Without tf_dir no shadow run happens, so the verdict is BLOCKED (fail closed).
+GET  /certificates                    summaries, newest first
+GET  /certificates/{plan_id}          the certificate exactly as signed
+GET  /certificates/{plan_id}/decisions   the audit log for that plan
+POST /certificates/{plan_id}/decision {"decision": "approve"|"deny", "reviewer": "...", "comment": "..."}
+     recorded in the append-only audit log; NEVER applied to any real system
+GET  /verify/{plan_id}                re-check the stored certificate's signature
+GET  /health
+
+CORS allows the dashboard at http://localhost:3000. Request bodies and settings
+are never logged; a log filter also redacts secret values if one slips through.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any, Callable, Literal
+
+from fastapi import FastAPI, HTTPException, Path as PathParam, Request
+from fastapi.concurrency import run_in_threadpool
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field, ValidationError
+
+from app.certificate import CertificateError, build_certificate, verify
+from app.config import check_required, db_path, install_secret_filter
+from app.plan_parser import PlanParseError
+from app.store import Store
+
+log = logging.getLogger("ghostops.api")
+DASHBOARD_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000"]
+MAX_PLAN_BYTES = 20 * 1024 * 1024
+PLAN_ID = PathParam(pattern=r"^[0-9a-f]{64}$", description="sha256 plan id")
+NO_APPLY_NOTE = "Recorded in the audit log only. GhostOps never applies changes to any real system."
+
+Analyzer = Callable[..., dict[str, Any]]
+
+
+class AnalyzeRequest(BaseModel):
+    plan_path: str | None = None
+    plan: dict[str, Any] | None = None
+    tf_dir: str | None = None
+    use_groq: bool = True
+
+
+class DecisionRequest(BaseModel):
+    decision: Literal["approve", "deny"]
+    reviewer: str = Field(min_length=1, max_length=100, pattern=r"^[\w .@'-]+$")
+    comment: str | None = Field(default=None, max_length=1000)
+
+
+def _load_plan_file(path_text: str) -> dict[str, Any]:
+    path = Path(path_text)
+    if path.suffix.lower() != ".json" or not path.is_file():
+        raise HTTPException(400, f"plan_path must be an existing .json file: {path_text}")
+    if path.stat().st_size > MAX_PLAN_BYTES:
+        raise HTTPException(413, "plan file is larger than 20 MB")
+    return _decode_plan(path.read_bytes())
+
+
+def _decode_plan(raw: bytes) -> dict[str, Any]:
+    try:
+        plan = json.loads(raw)
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise HTTPException(422, f"plan is not valid JSON: {exc}") from None
+    if not isinstance(plan, dict):
+        raise HTTPException(422, "plan must be a JSON object (terraform show -json output)")
+    return plan
+
+
+def _tf_dir(value: str | None) -> str | None:
+    if not value:
+        return None
+    if not Path(value).is_dir():
+        raise HTTPException(400, f"tf_dir must be an existing directory: {value}")
+    return value
+
+
+def create_app(store: Store | None = None, analyzer: Analyzer = build_certificate) -> FastAPI:
+    check_required()  # refuse to start without the signing secret
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        install_secret_filter()
+        yield
+
+    app = FastAPI(title="GhostOps", version="0.7.0", lifespan=lifespan)
+    app.add_middleware(CORSMiddleware, allow_origins=DASHBOARD_ORIGINS, allow_methods=["GET", "POST"],
+                       allow_headers=["Content-Type"])
+    app.state.store = store or Store(db_path())
+
+    def get_cert(plan_id: str) -> dict[str, Any]:
+        cert = app.state.store.get_certificate(plan_id)
+        if cert is None:
+            raise HTTPException(404, f"no certificate for plan {plan_id}")
+        return cert
+
+    @app.get("/health")
+    def health() -> dict[str, str]:
+        return {"status": "ok"}
+
+    @app.post("/analyze")
+    async def analyze(request: Request) -> dict[str, Any]:
+        content_type = request.headers.get("content-type", "")
+        if content_type.startswith("multipart/form-data"):
+            form = await request.form()
+            upload = form.get("plan")
+            if upload is None or not hasattr(upload, "read"):
+                raise HTTPException(400, 'multipart upload needs a file field named "plan"')
+            raw = await upload.read(MAX_PLAN_BYTES + 1)
+            if len(raw) > MAX_PLAN_BYTES:
+                raise HTTPException(413, "plan file is larger than 20 MB")
+            plan = _decode_plan(raw)
+            tf_dir = _tf_dir(str(form.get("tf_dir") or "") or None)
+            use_groq = str(form.get("use_groq", "true")).lower() not in ("false", "0", "no")
+        else:
+            try:
+                body = AnalyzeRequest.model_validate(await request.json())
+            except (ValueError, ValidationError) as exc:
+                raise HTTPException(422, f"invalid request body: {exc}") from None
+            if (body.plan_path is None) == (body.plan is None):
+                raise HTTPException(422, "give exactly one of plan_path or plan")
+            plan = _load_plan_file(body.plan_path) if body.plan_path else body.plan
+            tf_dir, use_groq = _tf_dir(body.tf_dir), body.use_groq
+
+        try:
+            cert = await run_in_threadpool(analyzer, plan, tf_dir, use_groq=use_groq)
+        except PlanParseError as exc:
+            raise HTTPException(422, f"not a usable Terraform plan: {exc}") from None
+        except CertificateError as exc:
+            raise HTTPException(500, str(exc)) from None
+        app.state.store.save_certificate(cert)
+        log.info("analyzed plan %s verdict=%s", cert["plan_id"], cert["verdict"])
+        return cert
+
+    @app.get("/certificates")
+    def list_certificates() -> list[dict[str, Any]]:
+        return app.state.store.list_certificates()
+
+    @app.get("/certificates/{plan_id}")
+    def get_certificate(plan_id: str = PLAN_ID) -> dict[str, Any]:
+        return get_cert(plan_id)
+
+    @app.get("/certificates/{plan_id}/decisions")
+    def list_decisions(plan_id: str = PLAN_ID) -> list[dict[str, Any]]:
+        get_cert(plan_id)
+        return app.state.store.decisions(plan_id)
+
+    @app.post("/certificates/{plan_id}/decision")
+    def decide(body: DecisionRequest, plan_id: str = PLAN_ID) -> dict[str, Any]:
+        cert = get_cert(plan_id)
+        if not verify(cert):
+            raise HTTPException(409, "stored certificate failed signature verification; refusing to record a decision")
+        entry = app.state.store.add_decision(cert, body.decision, body.reviewer.strip(), body.comment)
+        log.info("decision %s on plan %s by reviewer", body.decision, plan_id)
+        return {**entry, "applied": False, "note": NO_APPLY_NOTE}
+
+    @app.get("/verify/{plan_id}")
+    def verify_certificate(plan_id: str = PLAN_ID) -> dict[str, Any]:
+        cert = get_cert(plan_id)
+        return {"plan_id": plan_id, "valid": verify(cert), "verdict": cert["verdict"],
+                "timestamp": cert["timestamp"], "signature": cert["signature"]}
+
+    return app
