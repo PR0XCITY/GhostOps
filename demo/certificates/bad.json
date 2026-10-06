@@ -1,0 +1,391 @@
+{
+  "plan_id": "56ad5573d73cbf3dd5ae0ecbb04b90901c320f120ab60394002c44b12ec9d6e1",
+  "timestamp": "2026-10-06T15:07:07Z",
+  "resource_changes": [
+    {
+      "resource": "aws_db_instance.unencrypted",
+      "action": "create",
+      "before": null,
+      "after": {
+        "allocated_storage": 20,
+        "allow_major_version_upgrade": null,
+        "apply_immediately": false,
+        "auto_minor_version_upgrade": true,
+        "blue_green_update": [],
+        "copy_tags_to_snapshot": false,
+        "custom_iam_instance_profile": null,
+        "customer_owned_ip_enabled": null,
+        "dedicated_log_volume": false,
+        "delete_automated_backups": true,
+        "deletion_protection": null,
+        "domain": null,
+        "domain_auth_secret_arn": null,
+        "domain_dns_ips": null,
+        "domain_iam_role_name": null,
+        "domain_ou": null,
+        "enabled_cloudwatch_logs_exports": null,
+        "engine": "postgres",
+        "final_snapshot_identifier": null,
+        "iam_database_authentication_enabled": null,
+        "identifier": "ghostops-bad-unencrypted-db",
+        "instance_class": "db.t3.micro",
+        "manage_master_user_password": true,
+        "max_allocated_storage": null,
+        "monitoring_interval": 0,
+        "password": null,
+        "password_wo": null,
+        "password_wo_version": null,
+        "performance_insights_enabled": false,
+        "publicly_accessible": false,
+        "replicate_source_db": null,
+        "restore_to_point_in_time": [],
+        "s3_import": [],
+        "skip_final_snapshot": true,
+        "storage_encrypted": false,
+        "tags": null,
+        "timeouts": null,
+        "upgrade_storage_config": null,
+        "username": "ghostops"
+      }
+    },
+    {
+      "resource": "aws_iam_policy.admin_star",
+      "action": "create",
+      "before": null,
+      "after": {
+        "description": "Full admin: Action * on Resource *",
+        "name": "ghostops-bad-admin-star",
+        "path": "/",
+        "policy": "{\"Statement\":[{\"Action\":\"*\",\"Effect\":\"Allow\",\"Resource\":\"*\"}],\"Version\":\"2012-10-17\"}",
+        "tags": null
+      }
+    },
+    {
+      "resource": "aws_instance.web",
+      "action": "create",
+      "before": null,
+      "after": {
+        "ami": "ami-12345678",
+        "credit_specification": [],
+        "get_password_data": false,
+        "hibernation": null,
+        "instance_type": "t3.micro",
+        "launch_template": [],
+        "source_dest_check": true,
+        "tags": {
+          "Name": "ghostops-bad-web"
+        },
+        "tags_all": {
+          "Name": "ghostops-bad-web"
+        },
+        "timeouts": null,
+        "user_data_replace_on_change": false,
+        "volume_tags": null
+      }
+    },
+    {
+      "resource": "aws_s3_bucket.public",
+      "action": "create",
+      "before": null,
+      "after": {
+        "bucket": "ghostops-bad-public-bucket",
+        "force_destroy": false,
+        "tags": null,
+        "timeouts": null
+      }
+    },
+    {
+      "resource": "aws_s3_bucket_acl.public",
+      "action": "create",
+      "before": null,
+      "after": {
+        "acl": "public-read",
+        "expected_bucket_owner": null
+      }
+    },
+    {
+      "resource": "aws_s3_bucket_ownership_controls.public",
+      "action": "create",
+      "before": null,
+      "after": {
+        "rule": [
+          {
+            "object_ownership": "BucketOwnerPreferred"
+          }
+        ]
+      }
+    },
+    {
+      "resource": "aws_s3_bucket_public_access_block.public",
+      "action": "create",
+      "before": null,
+      "after": {
+        "block_public_acls": false,
+        "block_public_policy": false,
+        "ignore_public_acls": false,
+        "restrict_public_buckets": false
+      }
+    },
+    {
+      "resource": "aws_security_group.ssh_open",
+      "action": "create",
+      "before": null,
+      "after": {
+        "description": "SSH open to the world",
+        "egress": [
+          {
+            "cidr_blocks": [
+              "0.0.0.0/0"
+            ],
+            "description": "",
+            "from_port": 0,
+            "ipv6_cidr_blocks": [],
+            "prefix_list_ids": [],
+            "protocol": "-1",
+            "security_groups": [],
+            "self": false,
+            "to_port": 0
+          }
+        ],
+        "ingress": [
+          {
+            "cidr_blocks": [
+              "0.0.0.0/0"
+            ],
+            "description": "SSH from anywhere",
+            "from_port": 22,
+            "ipv6_cidr_blocks": [],
+            "prefix_list_ids": [],
+            "protocol": "tcp",
+            "security_groups": [],
+            "self": false,
+            "to_port": 22
+          }
+        ],
+        "name": "ghostops-bad-ssh-open",
+        "revoke_rules_on_delete": false,
+        "tags": null,
+        "timeouts": null
+      }
+    }
+  ],
+  "blast_radius": {
+    "newly_public": [
+      {
+        "address": "aws_instance.web",
+        "type": "aws_instance",
+        "via": [
+          "aws_security_group.ssh_open"
+        ]
+      },
+      {
+        "address": "aws_s3_bucket.public",
+        "type": "aws_s3_bucket",
+        "via": [
+          "aws_s3_bucket_acl.public"
+        ]
+      },
+      {
+        "address": "aws_security_group.ssh_open",
+        "type": "aws_security_group",
+        "via": [
+          "aws_security_group.ssh_open"
+        ]
+      }
+    ],
+    "iam_widened": [
+      {
+        "address": "aws_iam_policy.admin_star",
+        "type": "aws_iam_policy",
+        "added_grants": [
+          {
+            "action": "*",
+            "resource": "*"
+          }
+        ],
+        "removed_denies": [],
+        "admin": true,
+        "unknown": false
+      }
+    ],
+    "risk_flags": [
+      {
+        "rule": "GO-IAM-001",
+        "severity": "CRITICAL",
+        "resource": "aws_iam_policy.admin_star",
+        "message": "aws_iam_policy.admin_star allows every action (\"*\") on every resource (\"*\"): full administrator access to the AWS account."
+      },
+      {
+        "rule": "GO-IAMW-001",
+        "severity": "CRITICAL",
+        "resource": "aws_iam_policy.admin_star",
+        "message": "aws_iam_policy.admin_star widens IAM permissions to full admin (Action * on Resource *)."
+      },
+      {
+        "rule": "GO-SG-001",
+        "severity": "CRITICAL",
+        "resource": "aws_security_group.ssh_open",
+        "message": "aws_security_group.ssh_open allows SSH (port 22) from 0.0.0.0/0, i.e. from anywhere on the internet."
+      },
+      {
+        "rule": "GO-EXPOSE-001",
+        "severity": "HIGH",
+        "resource": "aws_instance.web",
+        "message": "aws_instance.web becomes reachable from the internet (0.0.0.0/0 or ::/0) via aws_security_group.ssh_open."
+      },
+      {
+        "rule": "GO-EXPOSE-001",
+        "severity": "HIGH",
+        "resource": "aws_s3_bucket.public",
+        "message": "aws_s3_bucket.public becomes reachable from the internet (0.0.0.0/0 or ::/0) via aws_s3_bucket_acl.public."
+      },
+      {
+        "rule": "GO-EXPOSE-001",
+        "severity": "HIGH",
+        "resource": "aws_security_group.ssh_open",
+        "message": "aws_security_group.ssh_open becomes reachable from the internet (0.0.0.0/0 or ::/0) via aws_security_group.ssh_open."
+      },
+      {
+        "rule": "GO-RDS-001",
+        "severity": "HIGH",
+        "resource": "aws_db_instance.unencrypted",
+        "message": "aws_db_instance.unencrypted does not enable storage encryption (storage_encrypted must be true), so data at rest is unencrypted."
+      },
+      {
+        "rule": "GO-S3-001",
+        "severity": "HIGH",
+        "resource": "aws_s3_bucket_acl.public",
+        "message": "aws_s3_bucket_acl.public sets the canned ACL \"public-read\": anyone on the internet can read every object in this bucket."
+      }
+    ],
+    "graph": {
+      "nodes": [
+        {
+          "id": "aws_db_instance.unencrypted",
+          "type": "aws_db_instance",
+          "action": "create",
+          "risk": false,
+          "risk_reasons": []
+        },
+        {
+          "id": "aws_iam_policy.admin_star",
+          "type": "aws_iam_policy",
+          "action": "create",
+          "risk": true,
+          "risk_reasons": [
+            "iam_admin",
+            "iam_widened"
+          ]
+        },
+        {
+          "id": "aws_instance.web",
+          "type": "aws_instance",
+          "action": "create",
+          "risk": true,
+          "risk_reasons": [
+            "public_exposure"
+          ]
+        },
+        {
+          "id": "aws_s3_bucket.public",
+          "type": "aws_s3_bucket",
+          "action": "create",
+          "risk": true,
+          "risk_reasons": [
+            "public_exposure"
+          ]
+        },
+        {
+          "id": "aws_s3_bucket_acl.public",
+          "type": "aws_s3_bucket_acl",
+          "action": "create",
+          "risk": true,
+          "risk_reasons": [
+            "opens_public_access"
+          ]
+        },
+        {
+          "id": "aws_s3_bucket_ownership_controls.public",
+          "type": "aws_s3_bucket_ownership_controls",
+          "action": "create",
+          "risk": false,
+          "risk_reasons": []
+        },
+        {
+          "id": "aws_s3_bucket_public_access_block.public",
+          "type": "aws_s3_bucket_public_access_block",
+          "action": "create",
+          "risk": false,
+          "risk_reasons": []
+        },
+        {
+          "id": "aws_security_group.ssh_open",
+          "type": "aws_security_group",
+          "action": "create",
+          "risk": true,
+          "risk_reasons": [
+            "opens_public_access",
+            "public_exposure"
+          ]
+        }
+      ],
+      "edges": [
+        {
+          "source": "aws_instance.web",
+          "target": "aws_security_group.ssh_open",
+          "via": [
+            "vpc_security_group_ids"
+          ]
+        },
+        {
+          "source": "aws_s3_bucket_acl.public",
+          "target": "aws_s3_bucket.public",
+          "via": [
+            "bucket"
+          ]
+        },
+        {
+          "source": "aws_s3_bucket_acl.public",
+          "target": "aws_s3_bucket_ownership_controls.public",
+          "via": [
+            "depends_on"
+          ]
+        },
+        {
+          "source": "aws_s3_bucket_acl.public",
+          "target": "aws_s3_bucket_public_access_block.public",
+          "via": [
+            "depends_on"
+          ]
+        },
+        {
+          "source": "aws_s3_bucket_ownership_controls.public",
+          "target": "aws_s3_bucket.public",
+          "via": [
+            "bucket"
+          ]
+        },
+        {
+          "source": "aws_s3_bucket_public_access_block.public",
+          "target": "aws_s3_bucket.public",
+          "via": [
+            "bucket"
+          ]
+        }
+      ]
+    }
+  },
+  "shadow_run": {
+    "applied": true,
+    "resources_created": 8,
+    "error": null
+  },
+  "cost_delta": {
+    "monthly_usd": 23.832,
+    "note": "Usage-based costs priced at zero usage, so the real cost may be higher: aws_s3_bucket.public."
+  },
+  "verdict": "BLOCKED_PENDING_REVIEW",
+  "risk_explanation": "The change is blocked pending review. The most severe findings are critical IAM policies that grant full administrative rights and overly broad permissions, plus a security group that leaves SSH or RDP open to the internet, all of which expose the environment to serious compromise. The emulator test apply succeeded.",
+  "generated_by": "groq",
+  "signature": "0e624fc56eb92fa1977d9a289feb497f5d2e6c566e3490f65414715c50982a30"
+}

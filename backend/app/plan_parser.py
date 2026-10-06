@@ -57,6 +57,9 @@ class ResourceChange:
     raw_actions: tuple[str, ...] = ()
     # Set when the change targets a deposed object rather than the current one.
     deposed: str | None = None
+    # Terraform's sensitivity masks: True, or a dict/list mirroring before/after.
+    before_sensitive: Any = False
+    after_sensitive: Any = False
 
 
 def normalize_action(actions: list[str] | tuple[str, ...]) -> Action:
@@ -124,6 +127,8 @@ def parse_plan(plan: Any) -> list[ResourceChange]:
                 after_unknown=after_unknown if isinstance(after_unknown, dict) else {},
                 raw_actions=tuple(change["actions"]),
                 deposed=rc.get("deposed"),
+                before_sensitive=change.get("before_sensitive", False),
+                after_sensitive=change.get("after_sensitive", False),
             )
         )
     return changes
