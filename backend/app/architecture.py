@@ -81,7 +81,7 @@ def check_architecture(
     Remediation text is the template (no Groq call per keystroke).
     """
     from app.blast_radius import analyze as analyze_blast_radius
-    from app.certificate import BLOCKING, SEVERITY_ORDER, cost_section, graph_flags, policy_flags
+    from app.certificate import SEVERITY_ORDER, blocks, cost_section, graph_flags, pillars_section, policy_flags
     from app.plan_parser import parse_plan
     from app.remediation import remediate
 
@@ -98,9 +98,10 @@ def check_architecture(
         f["remediation"] = remediation
     cost, breakdown = cost_section(plan, cost_result, generated=generated)
     return {
-        "verdict_preview": "BLOCKED_PENDING_REVIEW" if any(f["severity"] in BLOCKING for f in flags) else "AUTO_APPROVED",
+        "verdict_preview": "BLOCKED_PENDING_REVIEW" if any(blocks(f) for f in flags) else "AUTO_APPROVED",
         "static_only": True,
         "risk_flags": flags,
+        "pillars": pillars_section(flags),
         "newly_public": blast["newly_public"],
         "iam_widened": blast["iam_widened"],
         "graph": blast["graph"],

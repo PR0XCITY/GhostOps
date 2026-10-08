@@ -13,8 +13,14 @@ risk_flags  OPA findings, plus flags derived from the graph diff (a resource
             IAM document unknown until apply: HIGH; other IAM widening: MEDIUM)
             and shadow-run failures (GO-SHADOW-001, HIGH). If OPA itself fails,
             GO-ENGINE-001 (CRITICAL) blocks rather than certifying unchecked.
-verdict     BLOCKED_PENDING_REVIEW if any CRITICAL/HIGH flag or the shadow apply
-            did not succeed (including when it could not run); else AUTO_APPROVED.
+verdict     BLOCKED_PENDING_REVIEW if any CRITICAL/HIGH flag of the security pillar,
+            or the shadow apply did not succeed (including when it could not run);
+            else AUTO_APPROVED. Reliability, cost and performance flags are advisory:
+            they lower their pillar score but never block.
+pillars     {security|reliability|cost|performance: {score, findings[{rule, severity,
+            resource, penalty}]}}: score = max(0, 100 - sum of penalties), penalty
+            CRITICAL 40, HIGH 25, MEDIUM 10, LOW 5 per flag of that pillar.
+            Every flag carries its pillar; graph, shadow and engine flags are security.
 explanation Groq gets only sanitized structure (rule ids/titles, resource types,
             severities, verdict, whether the shadow apply worked) - never addresses,
             values, ARNs or account ids. Any Groq failure -> template, generated_by
@@ -51,6 +57,8 @@ from app.shadow import ShadowError, ShadowResult, run_shadow
 AUTO_APPROVED = "AUTO_APPROVED"
 BLOCKED = "BLOCKED_PENDING_REVIEW"
 BLOCKING = {"CRITICAL", "HIGH"}
+PILLARS = ("security", "reliability", "cost", "performance")
+PENALTY = {"CRITICAL": 40, "HIGH": 25, "MEDIUM": 10, "LOW": 5}
 SEVERITY_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
 SENSITIVE = "(sensitive)"
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
@@ -65,6 +73,19 @@ RULE_TITLES = {
     "GO-EXPOSE-001": "Resource newly exposed to the internet",
     "GO-IAMW-001": "IAM permissions widened",
     "GO-ENGINE-001": "Policy engine could not run",
+    "GO-S3-002": "S3 bucket has no encryption configuration in code",
+    "GO-REL-001": "RDS database is not Multi-AZ",
+    "GO-REL-002": "RDS automated backups are off",
+    "GO-REL-003": "S3 bucket has no versioning",
+    "GO-REL-004": "Single EC2 instance with no load balancer",
+    "GO-REL-005": "DynamoDB table has no point-in-time recovery",
+    "GO-REL-006": "No CloudWatch alarm for the new resources",
+    "GO-COST-001": "EC2 instance larger than its stated usage needs",
+    "GO-COST-002": "gp2 storage where gp3 is cheaper",
+    "GO-COST-003": "Cost-bearing resource has no tags",
+    "GO-PERF-001": "Lambda function at the minimum memory",
+    "GO-PERF-002": "Lambda timeout at the 15-minute maximum",
+    "GO-PERF-003": "DynamoDB provisioned capacity without auto scaling",
 }
 
 
@@ -139,13 +160,29 @@ def resource_changes_section(changes: list[ResourceChange]) -> list[dict[str, An
     ]
 
 
-def flag(rule: str, severity: str, resource: str, message: str) -> dict[str, str]:
-    return {"rule": rule, "severity": severity, "resource": resource, "message": message}
+def flag(rule: str, severity: str, resource: str, message: str, pillar: str = "security") -> dict[str, str]:
+    return {"rule": rule, "severity": severity, "resource": resource, "message": message, "pillar": pillar}
+
+
+def blocks(f: dict[str, Any]) -> bool:
+    """Only security findings can block; the other pillars are advisory."""
+    return f.get("pillar", "security") == "security" and f["severity"] in BLOCKING
+
+
+def pillars_section(flags: list[dict[str, Any]]) -> dict[str, Any]:
+    """Score per pillar: 100 minus a fixed penalty per flag of that pillar, floored at 0."""
+    out = {}
+    for pillar in PILLARS:
+        found = [{"rule": f["rule"], "severity": f["severity"], "resource": f["resource"],
+                  "penalty": PENALTY.get(f["severity"], 0)}
+                 for f in flags if f.get("pillar", "security") == pillar]
+        out[pillar] = {"score": max(0, 100 - sum(x["penalty"] for x in found)), "findings": found}
+    return out
 
 
 def policy_flags(plan: dict[str, Any]) -> list[dict[str, str]]:
     try:
-        return [flag(f.rule_id, f.severity, f.address, f.message) for f in evaluate(plan)]
+        return [flag(f.rule_id, f.severity, f.address, f.message, f.pillar) for f in evaluate(plan)]
     except PolicyEngineError as exc:
         return [flag("GO-ENGINE-001", "CRITICAL", "(policy engine)",
                      f"The OPA policy engine could not evaluate this plan ({exc}); nothing can be certified.")]
@@ -233,7 +270,7 @@ def architecture_section(generated) -> dict[str, Any] | None:
 
 
 def decide(flags: list[dict[str, str]], shadow: dict[str, Any]) -> str:
-    if not shadow["applied"] or any(f["severity"] in BLOCKING for f in flags):
+    if not shadow["applied"] or any(blocks(f) for f in flags):
         return BLOCKED
     return AUTO_APPROVED
 
@@ -279,6 +316,8 @@ def explainer_facts(flags: list[dict[str, str]], shadow: dict[str, Any], verdict
                 "title": RULE_TITLES.get(f["rule"], "Policy finding"),
                 "severity": f["severity"] if f["severity"] in SEVERITY_ORDER else "UNKNOWN",
                 "resource_type": resource_type(f["resource"]),
+                "pillar": f.get("pillar", "security") if f.get("pillar", "security") in PILLARS else "security",
+                "blocks_change": blocks(f),
             }
             for f in flags
         ],
@@ -305,7 +344,8 @@ def groq_explain(facts: dict[str, Any], *, timeout: float = 30) -> str | None:
             {"role": "system", "content": (
                 "You summarize infrastructure change risk reviews for non-experts. Write exactly 2 or 3 plain "
                 "English sentences. Use only the facts provided: state the verdict, the most severe findings and "
-                "what they mean, and whether the emulator test apply succeeded. Do not invent resources, names, "
+                "what they mean, and whether the emulator test apply succeeded. Only findings with blocks_change true "
+                "can block; the others are advisory (reliability, cost, performance or low severity). Do not invent resources, names, "
                 "numbers or remediation steps. No markdown, no lists.")},
             {"role": "user", "content": json.dumps(facts, sort_keys=True)},
         ],
@@ -323,18 +363,18 @@ def groq_explain(facts: dict[str, Any], *, timeout: float = 30) -> str | None:
 
 def template_explain(flags: list[dict[str, str]], shadow: dict[str, Any], cost: dict[str, Any],
                      verdict: str, change_count: int) -> str:
-    blocking = [f for f in flags if f["severity"] in BLOCKING]
+    blocking = [f for f in flags if blocks(f)]
     titles = list(dict.fromkeys(RULE_TITLES.get(f["rule"], f["rule"]) for f in blocking or flags))
     named = "; ".join(titles[:3]) + ("; and others" if len(titles) > 3 else "")
     if verdict == BLOCKED:
-        counts = {s: sum(f["severity"] == s for f in flags) for s in ("CRITICAL", "HIGH")}
+        counts = {s: sum(f["severity"] == s for f in blocking) for s in ("CRITICAL", "HIGH")}
         first = (f"GhostOps blocked this change for human review: it has {counts['CRITICAL']} critical and "
-                 f"{counts['HIGH']} high-severity findings ({named})." if blocking else
+                 f"{counts['HIGH']} high-severity security findings ({named})." if blocking else
                  "GhostOps blocked this change for human review because it could not be verified.")
     else:
-        warns = [f for f in flags if f["severity"] not in BLOCKING]
+        warns = [f for f in flags if not blocks(f)]
         first = (f"GhostOps auto-approved this change of {change_count} resource(s): no critical or high-severity "
-                 "findings" + (f", only {len(warns)} lower-severity warning(s) ({named})." if warns else "."))
+                 "security findings" + (f", only {len(warns)} advisory finding(s) ({named})." if warns else "."))
     second = (f"It applied cleanly on the MiniStack emulator ({shadow['resources_created']} resources)."
               if shadow["applied"] else
               "The test apply on the MiniStack emulator did not succeed, so the change is unverified.")
@@ -397,6 +437,7 @@ def build_certificate(
         "cost_breakdown": cost_breakdown,
         "generated_terraform": generated.main_tf if generated is not None else None,
         "architecture": architecture_section(generated),
+        "pillars": pillars_section(flags),
     }
     cert["signature"] = sign(cert, secret=secret_bytes.decode("utf-8"))
     return cert

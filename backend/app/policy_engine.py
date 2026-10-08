@@ -33,6 +33,7 @@ from app.tools import find_tool
 RULES_DIR = Path(__file__).resolve().parent.parent / "rules"
 QUERY = "data.ghostops.result"
 SEVERITY_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+PILLARS = ("security", "reliability", "cost", "performance")
 
 Decision = Literal["deny", "warn"]
 
@@ -48,6 +49,7 @@ class Finding:
     address: str
     message: str
     decision: Decision
+    pillar: str = "security"
 
 
 def find_opa() -> str:
@@ -73,11 +75,14 @@ def _to_finding(raw: Any, decision: Decision) -> Finding:
             address=str(raw["address"]),
             message=str(raw["message"]),
             decision=decision,
+            pillar=str(raw.get("pillar", "security")),
         )
     except KeyError as exc:
         raise PolicyEngineError(f"{decision} finding missing field {exc}: {raw!r}") from None
     if finding.severity not in SEVERITY_ORDER:
         raise PolicyEngineError(f"unknown severity {finding.severity!r} in {finding.rule_id}")
+    if finding.pillar not in PILLARS:
+        raise PolicyEngineError(f"unknown pillar {finding.pillar!r} in {finding.rule_id}")
     return finding
 
 
@@ -130,7 +135,7 @@ def main(argv: list[str]) -> int:
         return 2
     findings = evaluate_file(argv[1])
     for f in findings:
-        print(f"{f.decision.upper():4} {f.severity:8} {f.rule_id:10} {f.message}")
+        print(f"{f.decision.upper():4} {f.severity:8} {f.pillar:11} {f.rule_id:11} {f.message}")
     if not findings:
         print("no findings")
     return 1 if any(f.decision == "deny" for f in findings) else 0

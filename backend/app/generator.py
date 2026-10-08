@@ -274,9 +274,10 @@ resource "aws_instance" "{i}" {{
   vpc_security_group_ids = [aws_security_group.{i}_ssh.id]
 
   tags = {{
-    Name            = "ghostops-{s.slug}-${{count.index}}"
-    ManagedBy       = "ghostops"
-    GhostOpsService = "ec2"
+    Name               = "ghostops-{s.slug}-${{count.index}}"
+    ManagedBy          = "ghostops"
+    GhostOpsService    = "ec2"
+    ExpectedCpuPercent = "{c["expected_cpu_percent"]}"
   }}
 }}
 
@@ -366,6 +367,7 @@ def _rds(s: Service, uid: str) -> str:
   instance_class              = {hcl_string(c["instance_class"])}
   allocated_storage           = {c["storage_gb"]}
   multi_az                    = {hcl_bool(c["multi_az"])}
+  backup_retention_period     = {c["backup_retention_days"]}
   storage_encrypted           = {hcl_bool(c["encrypted"])}
   publicly_accessible         = {hcl_bool(c["publicly_accessible"])}
   username                    = "ghostops"

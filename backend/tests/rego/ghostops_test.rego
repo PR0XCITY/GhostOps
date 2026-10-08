@@ -169,8 +169,19 @@ test_replace_warns_as_replacement if {
 	contains(f.message, "replaced (destroyed and re-created)")
 }
 
-test_update_does_not_warn if {
-	count(ghostops.warn) == 0 with input as plan([rc("aws_s3_bucket", ["update"], {"bucket": "b"})])
+test_update_does_not_warn_about_deletion if {
+	not "GO-DEL-001" in ids(ghostops.warn) with input as plan([rc("aws_s3_bucket", ["update"], {"bucket": "b"})])
+}
+
+test_deletion_is_reliability_pillar if {
+	some f in ghostops.warn with input as plan([rc("aws_s3_bucket", ["delete"], null)])
+	f.pillar == "reliability"
+}
+
+test_original_rules_are_security_pillar if {
+	findings := ghostops.deny with input as plan([create("aws_db_instance", {"storage_encrypted": false})])
+	count(findings) > 0
+	every f in findings { f.pillar == "security" }
 }
 
 test_data_source_read_is_ignored if {

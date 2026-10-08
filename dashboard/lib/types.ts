@@ -4,6 +4,8 @@
 export type Verdict = "AUTO_APPROVED" | "BLOCKED_PENDING_REVIEW";
 export type Severity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
 export type Action = "create" | "update" | "delete" | "replace" | "no-op";
+export type Pillar = "security" | "reliability" | "cost" | "performance";
+export const PILLARS: Pillar[] = ["security", "reliability", "cost", "performance"];
 
 export interface ResourceChange {
   resource: string;
@@ -34,8 +36,17 @@ export interface RiskFlag {
   severity: Severity;
   resource: string;
   message: string;
+  pillar?: Pillar; // added later; absent on older certificates (= security)
   remediation?: Remediation; // added later; absent on older certificates
 }
+
+// score = max(0, 100 - sum of penalties); penalty CRITICAL 40, HIGH 25, MEDIUM 10, LOW 5
+export interface PillarScore {
+  score: number;
+  findings: { rule: string; severity: Severity; resource: string; penalty: number }[];
+}
+
+export type Pillars = Record<Pillar, PillarScore>;
 
 export interface CostBreakdownRow {
   resource: string;
@@ -106,6 +117,7 @@ export interface Certificate {
   cost_breakdown?: CostBreakdownRow[];
   generated_terraform?: string | null;
   architecture?: { services: (ArchitectureServiceInfo & { analysis: "shadow_and_static" | "static_only" })[] } | null;
+  pillars?: Pillars; // added later; absent on older certificates
   signature: string;
 }
 
@@ -171,6 +183,7 @@ export interface CheckResult {
   verdict_preview: Verdict;
   static_only: true;
   risk_flags: RiskFlag[];
+  pillars: Pillars;
   newly_public: NewlyPublic[];
   iam_widened: IamWidened[];
   graph: { nodes: GraphNode[]; edges: GraphEdge[] };

@@ -28,6 +28,10 @@ from app.catalog import CATALOG
 
 PRIVATE_CIDR = "10.0.0.0/16"
 LEAST_PRIVILEGE_ACTIONS = ["s3:GetObject"]
+BACKUP_DAYS = 7
+RIGHT_SIZE = "t3.small"
+LAMBDA_MEMORY_MB = 256
+LAMBDA_TIMEOUT_S = 30
 SCOPED_RESOURCE = "arn:aws:s3:::example-bucket/*"
 
 
@@ -78,6 +82,40 @@ def _service_fix(rule: str, service) -> tuple[list[dict[str, Any]], str]:
     if rule == "GO-RDS-001" and t == "rds":
         return [_change(service, "encrypted", True)], (
             f"Encrypt database {name} at rest: set encrypted to true (it cannot be added later without a rebuild).")
+    # advisory pillars
+    if rule == "GO-REL-001" and t == "rds":
+        return [_change(service, "multi_az", True)], (
+            f"Run database {name} in two availability zones: set multi_az to true (roughly doubles its instance cost).")
+    if rule == "GO-REL-002" and t == "rds":
+        return [_change(service, "backup_retention_days", BACKUP_DAYS)], (
+            f"Turn on automated backups for {name}: set backup_retention_days to {BACKUP_DAYS}.")
+    if rule == "GO-REL-003" and t == "s3":
+        return [_change(service, "versioning", True)], (
+            f"Keep old object versions in bucket {name}: set versioning to true.")
+    if rule == "GO-S3-002" and t == "s3":
+        return [_change(service, "encryption", True)], (
+            f"State the encryption of bucket {name} in code: set encryption to true (AES-256).")
+    if rule == "GO-REL-004" and t == "ec2":
+        return [_change(service, "count", 2)], (
+            f"Run at least two {name} instances (set count to 2) and add an Application Load Balancer in front of them.")
+    if rule == "GO-REL-005" and t == "dynamodb":
+        return [_change(service, "point_in_time_recovery", True)], (
+            f"Turn on point-in-time recovery for table {name}: set point_in_time_recovery to true.")
+    if rule == "GO-REL-006":
+        return [], (f"Add a CloudWatch alarm service (for example CPUUtilization or Errors) that watches {name}, "
+                    "so failures are noticed.")
+    if rule == "GO-COST-001" and t == "ec2":
+        return [_change(service, "instance_type", RIGHT_SIZE)], (
+            f"Right-size {name}: at {c['expected_cpu_percent']}% expected CPU, set instance_type to {RIGHT_SIZE}.")
+    if rule == "GO-PERF-001" and t == "lambda":
+        return [_change(service, "memory_mb", LAMBDA_MEMORY_MB)], (
+            f"Give function {name} more CPU: set memory_mb to {LAMBDA_MEMORY_MB} (CPU scales with memory).")
+    if rule == "GO-PERF-002" and t == "lambda":
+        return [_change(service, "timeout_s", LAMBDA_TIMEOUT_S)], (
+            f"Bound function {name}: set timeout_s to {LAMBDA_TIMEOUT_S} (raise it only if real runs need longer).")
+    if rule == "GO-PERF-003" and t == "dynamodb":
+        return [_change(service, "billing_mode", "PAY_PER_REQUEST")], (
+            f"Let table {name} scale with traffic: set billing_mode to PAY_PER_REQUEST (or add auto scaling).")
     return [], ""
 
 
@@ -105,6 +143,33 @@ def _terraform_fix(rule: str, resource: str, rtype: str) -> tuple[list[dict[str,
         return [_tf_change(resource, "lifecycle.prevent_destroy", True)], (
             f"Confirm that destroying {resource} is intended; if it holds data, back it up first or add "
             "lifecycle { prevent_destroy = true }.")
+    simple = {
+        "GO-REL-001": ("multi_az", True, "run it in two availability zones"),
+        "GO-REL-002": ("backup_retention_period", BACKUP_DAYS, "keep automated backups"),
+        "GO-REL-005": ("point_in_time_recovery.enabled", True, "turn on point-in-time recovery"),
+        "GO-COST-001": ("instance_type", RIGHT_SIZE, "match the size to the stated usage"),
+        "GO-PERF-001": ("memory_size", LAMBDA_MEMORY_MB, "give it more memory and CPU"),
+        "GO-PERF-002": ("timeout", LAMBDA_TIMEOUT_S, "bound its run time"),
+        "GO-PERF-003": ("billing_mode", "PAY_PER_REQUEST", "scale with traffic (or add aws_appautoscaling_target)"),
+    }
+    if rule in simple:
+        attribute, to, why = simple[rule]
+        return [_tf_change(resource, attribute, to)], f"In {resource}, set {attribute} = {json.dumps(to)} to {why}."
+    if rule == "GO-REL-003":
+        return [_tf_change(resource, "aws_s3_bucket_versioning.status", "Enabled")], (
+            f"Add an aws_s3_bucket_versioning resource for {resource} with status = \"Enabled\".")
+    if rule == "GO-S3-002":
+        return [_tf_change(resource, "aws_s3_bucket_server_side_encryption_configuration.sse_algorithm", "AES256")], (
+            f"Add an aws_s3_bucket_server_side_encryption_configuration for {resource} (AES256 or aws:kms).")
+    if rule == "GO-REL-004":
+        return [], f"Run {resource} as two or more instances behind a load balancer or in an auto scaling group."
+    if rule == "GO-REL-006":
+        return [], f"Add an aws_cloudwatch_metric_alarm that watches {resource} (and the other new resources)."
+    if rule == "GO-COST-002":
+        return [_tf_change(resource, "type", "gp3")], f"In {resource}, use gp3 instead of gp2 (about 20% cheaper)."
+    if rule == "GO-COST-003":
+        return [_tf_change(resource, "tags.Owner", "your-team")], (
+            f"Tag {resource} (at least Name and Owner), or set default_tags on the AWS provider.")
     return [], ""
 
 

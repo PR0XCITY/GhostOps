@@ -19,7 +19,7 @@ def summary(findings: list[Finding]) -> set[tuple[str, str, str, str]]:
 
 
 def test_bad_plan_fires_each_deny_rule_exactly_once():
-    findings = evaluate_file(FIXTURES / "bad_plan.json")
+    findings = [f for f in evaluate_file(FIXTURES / "bad_plan.json") if f.decision == "deny"]
     assert summary(findings) == {
         ("deny", "GO-SG-001", "CRITICAL", "aws_security_group.ssh_open"),
         ("deny", "GO-IAM-001", "CRITICAL", "aws_iam_policy.admin_star"),
@@ -27,6 +27,20 @@ def test_bad_plan_fires_each_deny_rule_exactly_once():
         ("deny", "GO-RDS-001", "HIGH", "aws_db_instance.unencrypted"),
     }
     assert len(findings) == 4
+    assert {f.pillar for f in findings} == {"security"}
+
+
+def test_bad_plan_advisory_findings_by_pillar():
+    findings = [f for f in evaluate_file(FIXTURES / "bad_plan.json") if f.decision == "warn"]
+    assert {(f.pillar, f.rule_id, f.severity, f.address) for f in findings} == {
+        ("reliability", "GO-REL-001", "MEDIUM", "aws_db_instance.unencrypted"),
+        ("reliability", "GO-REL-003", "MEDIUM", "aws_s3_bucket.public"),
+        ("reliability", "GO-REL-004", "MEDIUM", "aws_instance.web"),
+        ("reliability", "GO-REL-006", "LOW", "aws_db_instance.unencrypted"),
+        ("security", "GO-S3-002", "LOW", "aws_s3_bucket.public"),
+        ("cost", "GO-COST-003", "LOW", "aws_s3_bucket.public"),
+        ("cost", "GO-COST-003", "LOW", "aws_db_instance.unencrypted"),
+    }
 
 
 def test_bad_plan_messages_are_plain_and_name_the_resource():
@@ -41,7 +55,7 @@ def test_bad_plan_messages_are_plain_and_name_the_resource():
 
 def test_findings_are_sorted_most_severe_first():
     severities = [f.severity for f in evaluate_file(FIXTURES / "bad_plan.json")]
-    assert severities == ["CRITICAL", "CRITICAL", "HIGH", "HIGH"]
+    assert severities == ["CRITICAL", "CRITICAL", "HIGH", "HIGH", "MEDIUM", "MEDIUM", "MEDIUM", "LOW", "LOW", "LOW", "LOW"]
 
 
 def test_destroy_plan_warns_on_every_deletion():
@@ -53,12 +67,20 @@ def test_destroy_plan_warns_on_every_deletion():
     assert all("will be destroyed" in f.message for f in findings)
 
 
-# --- nothing fires on the good config ----------------------------------------
+# --- nothing blocking fires on the good config ---------------------------------
 
 
-@pytest.mark.parametrize("fixture", ["good_plan.json", "good_noop_plan.json", "good_modified_plan.json"])
-def test_good_config_has_no_findings(fixture):
-    assert evaluate_file(FIXTURES / fixture) == []
+@pytest.mark.parametrize("fixture", ["good_plan.json", "good_modified_plan.json"])
+def test_good_config_has_only_advisory_findings(fixture):
+    # The good demo bucket has no versioning or encryption resource: advisory only.
+    findings = evaluate_file(FIXTURES / fixture)
+    assert not [f for f in findings if f.decision == "deny"]
+    assert {(f.pillar, f.rule_id, f.severity) for f in findings} <= {
+        ("reliability", "GO-REL-003", "MEDIUM"), ("security", "GO-S3-002", "LOW")}
+
+
+def test_unchanged_plan_has_no_findings():
+    assert evaluate_file(FIXTURES / "good_noop_plan.json") == []
 
 
 # --- Rego unit tests and compile checks --------------------------------------
@@ -78,7 +100,7 @@ def test_rego_unit_tests_pass():
     results = json.loads(proc.stdout)
     failed = [r["name"] for r in results if r.get("fail") or r.get("error")]
     assert proc.returncode == 0 and not failed, failed or proc.stderr
-    assert len(results) >= 27
+    assert len(results) >= 70
 
 
 # --- failure handling: never silently "no findings" -----------------------------
@@ -115,7 +137,9 @@ def test_cli_exit_codes():
 
     bad = run("bad_plan.json")
     assert bad.returncode == 1
-    assert "DENY CRITICAL GO-SG-001" in bad.stdout
+    assert "DENY CRITICAL security    GO-SG-001" in bad.stdout
     good = run("good_plan.json")
-    assert good.returncode == 0
-    assert good.stdout.strip() == "no findings"
+    assert good.returncode == 0  # warnings only
+    assert "WARN MEDIUM   reliability GO-REL-003" in good.stdout
+    empty = run("good_noop_plan.json")
+    assert empty.returncode == 0 and empty.stdout.strip() == "no findings"

@@ -153,7 +153,8 @@ def test_architecture_preview_returns_terraform_only(client, analyzer, store):
     assert "aws_s3_bucket.assets" in out["resources"]
     assert out["services"][0] == {"type": "ec2", "name": "web", "shadow_supported": True, "usage": {},
                                   "config": {"name": "web", "instance_type": "t3.micro", "count": 2,
-                                             "volume_gb": 20, "ssh_source_cidr": "10.0.0.0/16"},
+                                             "volume_gb": 20, "ssh_source_cidr": "10.0.0.0/16",
+                                             "expected_cpu_percent": 40},
                                   "resources": ["aws_security_group.web_ssh", "aws_instance.web",
                                                 "aws_ebs_volume.web", "aws_volume_attachment.web"]}
     assert analyzer.calls == [] and client.get("/certificates").json() == []  # nothing analysed or stored
@@ -180,7 +181,7 @@ def test_list_and_get_certificates(client):
     assert {c["plan_id"] for c in listing} == {bad["plan_id"], good["plan_id"]}
     summary = next(c for c in listing if c["plan_id"] == bad["plan_id"])
     assert summary["verdict"] == "BLOCKED_PENDING_REVIEW"
-    assert summary["risk_flag_counts"] == {"CRITICAL": 3, "HIGH": 5, "MEDIUM": 0, "LOW": 0}
+    assert summary["risk_flag_counts"] == {"CRITICAL": 3, "HIGH": 5, "MEDIUM": 3, "LOW": 4}  # + advisory pillar findings
     assert summary["resource_change_count"] == 8 and summary["latest_decision"] is None
     assert client.get(f"/certificates/{bad['plan_id']}").json() == bad
 

@@ -20,7 +20,7 @@ SECRET = "0123456789abcdef" * 4
 NOW = datetime(2026, 10, 6, 12, 0, 0, tzinfo=timezone.utc)
 TOP_LEVEL = ["plan_id", "timestamp", "resource_changes", "blast_radius", "shadow_run", "cost_delta",
              "verdict", "risk_explanation", "generated_by", "cost_breakdown", "generated_terraform",
-             "architecture", "signature"]
+             "architecture", "pillars", "signature"]
 
 
 def load(name):
@@ -53,7 +53,10 @@ def test_exact_dashboard_schema():
     assert set(cert["cost_delta"]) == {"monthly_usd", "note"}
     assert all(set(r) == {"resource", "action", "before", "after"} for r in cert["resource_changes"])
     flags = cert["blast_radius"]["risk_flags"]
-    assert all(set(f) == {"rule", "severity", "resource", "message", "remediation"} for f in flags)
+    assert all(set(f) == {"rule", "severity", "resource", "message", "pillar", "remediation"} for f in flags)
+    assert list(cert["pillars"]) == ["security", "reliability", "cost", "performance"]
+    assert all(set(p) == {"score", "findings"} for p in cert["pillars"].values())
+    assert all(set(x) == {"rule", "severity", "resource", "penalty"} for p in cert["pillars"].values() for x in p["findings"])
     assert all(set(f["remediation"]) == {"summary", "config_change", "generated_by"} for f in flags)
     assert cert["generated_terraform"] is None and cert["architecture"] is None  # plain plan, not an architecture
     assert isinstance(cert["cost_breakdown"], list)
@@ -86,7 +89,9 @@ def test_bad_demo_is_blocked_with_flags_from_every_source():
 def test_good_demo_is_auto_approved():
     cert = make("good_plan.json", shadow=shadow_ok(2), cost=cost_result(0.1))
     assert cert["verdict"] == AUTO_APPROVED
-    assert cert["blast_radius"]["risk_flags"] == []
+    # only advisory findings: the bucket has no versioning or encryption resource
+    assert {(f["pillar"], f["rule"]) for f in cert["blast_radius"]["risk_flags"]} == {
+        ("reliability", "GO-REL-003"), ("security", "GO-S3-002")}
     assert cert["shadow_run"] == {"applied": True, "resources_created": 2, "error": None,
                                   "resources": [], "inventory_error": None}
     assert cert["cost_delta"]["monthly_usd"] == 0.1
@@ -289,7 +294,8 @@ def test_groq_receives_only_sanitized_structure(monkeypatch):
     assert sent["url"] == "https://api.groq.com/openai/v1/chat/completions"
     facts = json.loads(sent["body"]["messages"][1]["content"])
     assert set(facts) == {"verdict", "resource_change_count", "shadow_apply_succeeded", "findings"}
-    assert all(set(f) == {"rule", "title", "severity", "resource_type"} for f in facts["findings"])
+    assert all(set(f) == {"rule", "title", "severity", "resource_type", "pillar", "blocks_change"}
+               for f in facts["findings"])
     outbound = json.dumps(sent["body"])
     for leak in ("ssh_open", "admin_star", "ghostops-bad", "unencrypted", "0.0.0.0/0", "arn:aws", "23.8", "ami-"):
         assert leak not in outbound, leak
@@ -317,7 +323,8 @@ def test_groq_failure_falls_back_to_template(monkeypatch, failure):
 def test_template_for_approved_change():
     cert = make("good_plan.json", shadow=shadow_ok(2), cost=cost_result(0.1))
     assert cert["risk_explanation"] == (
-        "GhostOps auto-approved this change of 2 resource(s): no critical or high-severity findings. "
+        "GhostOps auto-approved this change of 2 resource(s): no critical or high-severity security findings, "
+        "only 2 advisory finding(s) (S3 bucket has no versioning; S3 bucket has no encryption configuration in code). "
         "It applied cleanly on the MiniStack emulator (2 resources). Estimated monthly cost change: +$0.10.")
 
 
@@ -326,7 +333,65 @@ def test_explainer_facts_shape():
     facts = explainer_facts(flags, {"applied": True}, BLOCKED, 3)
     assert facts == {"verdict": BLOCKED, "resource_change_count": 3, "shadow_apply_succeeded": True, "findings": [
         {"rule": "GO-SG-001", "title": "SSH or RDP open to the internet", "severity": "CRITICAL",
-         "resource_type": "aws_security_group"}]}
+         "resource_type": "aws_security_group", "pillar": "security", "blocks_change": True}]}
+
+
+# --- pillars ------------------------------------------------------------------------------
+
+
+def db_plan(after):
+    return {"format_version": "1.2", "resource_changes": [{
+        "address": "aws_db_instance.db", "mode": "managed", "type": "aws_db_instance", "name": "db",
+        "change": {"actions": ["create"], "before": None, "after": after}}]}
+
+
+def test_pillar_scores_follow_the_published_formula():
+    cert = make()
+    pillars = cert["pillars"]
+    for name, pillar in pillars.items():
+        assert pillar["score"] == max(0, 100 - sum(x["penalty"] for x in pillar["findings"]))
+        assert all(x["penalty"] == certificate.PENALTY[x["severity"]] for x in pillar["findings"])
+    flags = cert["blast_radius"]["risk_flags"]
+    assert sum(len(p["findings"]) for p in pillars.values()) == len(flags)
+    assert pillars["security"]["score"] == 0  # 3 critical + 5 high
+    # reliability: GO-REL-001, -003, -004 (MEDIUM, 10 each) + GO-REL-006 (LOW, 5)
+    assert pillars["reliability"]["score"] == 100 - 3 * 10 - 5
+    assert pillars["cost"]["score"] == 100 - 2 * 5  # two untagged resources
+    assert pillars["performance"] == {"score": 100, "findings": []}
+
+
+def test_advisory_high_finding_does_not_block():
+    after = {"storage_encrypted": True, "multi_az": True, "backup_retention_period": 0, "tags": {"Name": "db"}}
+    cert = build_certificate(db_plan(after), shadow_result=shadow_ok(1), cost_result=cost_result(15.0),
+                             use_groq=False, secret=SECRET, now=NOW)
+    rel = [f for f in cert["blast_radius"]["risk_flags"] if f["rule"] == "GO-REL-002"]
+    assert rel and rel[0]["severity"] == "HIGH" and rel[0]["pillar"] == "reliability"
+    assert cert["verdict"] == AUTO_APPROVED
+    assert cert["pillars"]["reliability"]["score"] == 100 - 25 - 5  # REL-002 HIGH + REL-006 LOW (no alarm)
+    assert cert["pillars"]["security"]["score"] == 100
+
+
+def test_security_high_finding_still_blocks():
+    after = {"storage_encrypted": False, "multi_az": True, "backup_retention_period": 7, "tags": {"Name": "db"}}
+    cert = build_certificate(db_plan(after), shadow_result=shadow_ok(1), cost_result=cost_result(15.0),
+                             use_groq=False, secret=SECRET, now=NOW)
+    assert cert["verdict"] == BLOCKED
+    assert cert["pillars"]["security"] == {"score": 75, "findings": [
+        {"rule": "GO-RDS-001", "severity": "HIGH", "resource": "aws_db_instance.db", "penalty": 25}]}
+
+
+def test_low_security_finding_does_not_block():
+    flags = [certificate.flag("GO-S3-002", "LOW", "aws_s3_bucket.b", "m", "security"),
+             certificate.flag("GO-REL-002", "HIGH", "aws_db_instance.d", "m", "reliability"),
+             certificate.flag("GO-PERF-002", "MEDIUM", "aws_lambda_function.f", "m", "performance")]
+    assert certificate.decide(flags, {"applied": True}) == AUTO_APPROVED
+    flags.append(certificate.flag("GO-EXPOSE-001", "HIGH", "aws_instance.w", "m"))  # graph flags are security
+    assert certificate.decide(flags, {"applied": True}) == BLOCKED
+
+
+def test_pillar_scores_floor_at_zero():
+    flags = [certificate.flag("GO-REL-002", "HIGH", f"aws_db_instance.d{i}", "m", "reliability") for i in range(6)]
+    assert certificate.pillars_section(flags)["reliability"]["score"] == 0
 
 
 @pytest.mark.integration

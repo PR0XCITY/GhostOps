@@ -62,6 +62,8 @@ CATALOG: dict[str, dict[str, Any]] = {
                help="Attached gp3 EBS volume. (A root_block_device cannot be read back on MiniStack.)"),
             _f("ssh_source_cidr", "SSH allowed from (CIDR)", "cidr", PRIVATE_CIDR,
                help="0.0.0.0/0 opens SSH to the whole internet (GhostOps will block it)."),
+            _f("expected_cpu_percent", "Expected average CPU (%)", "int", 40, min=1, max=100,
+               help="Stated usage, tagged as ExpectedCpuPercent. At 20 or less, sizes above small are flagged as oversized."),
         ],
     },
     "s3": {
@@ -103,6 +105,8 @@ CATALOG: dict[str, dict[str, Any]] = {
                options=["db.t3.micro", "db.t3.small", "db.t3.medium", "db.m5.large"]),
             _f("storage_gb", "Storage (GB)", "int", 20, min=20, max=1000),
             _f("multi_az", "Multi-AZ", "bool", False),
+            _f("backup_retention_days", "Backup retention (days)", "int", 7, min=0, max=35,
+               help="0 turns automated backups off (GhostOps flags it)."),
             _f("encrypted", "Storage encrypted", "bool", True),
             _f("publicly_accessible", "Publicly accessible", "bool", False),
         ],
@@ -151,7 +155,8 @@ CATALOG: dict[str, dict[str, Any]] = {
         "fields": [
             NAME,
             _f("runtime", "Runtime", "select", "python3.12", options=["python3.12", "python3.11", "nodejs20.x"]),
-            _f("memory_mb", "Memory (MB)", "int", 128, min=128, max=10240),
+            _f("memory_mb", "Memory (MB)", "int", 256, min=128, max=10240,
+               help="CPU scales with memory; 128 MB (the minimum) is flagged as slow."),
             _f("timeout_s", "Timeout (s)", "int", 10, min=1, max=900),
         ],
         "usage_resource": "aws_lambda_function",

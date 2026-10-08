@@ -12,7 +12,7 @@ You can feed it a plan from any Terraform project, or design one in the **Archit
 Builder**: pick AWS services, set their options, and watch the generated Terraform, risk
 flags, suggested fixes and monthly cost update as you edit.
 
-![Architecture Builder with a risky design](docs/screenshots/builder-risky.png)
+![Architecture Builder with a risky design](docs/screenshots/builder-pillars-risky.png)
 
 ## The problem
 
@@ -71,20 +71,61 @@ flowchart LR
 
 ### Rules that exist today
 
-| Rule | Severity | Fires when |
-|---|---|---|
-| GO-SG-001 | CRITICAL | SSH (22) or RDP (3389) open to `0.0.0.0/0` or `::/0` (inline, `aws_security_group_rule`, `aws_vpc_security_group_ingress_rule`) |
-| GO-IAM-001 | CRITICAL | IAM policy (managed or inline) allows `Action "*"` on `Resource "*"` |
-| GO-S3-001 | HIGH | S3 ACL `public-read` / `public-read-write` |
-| GO-RDS-001 | HIGH | `aws_db_instance` without `storage_encrypted = true` |
-| GO-DEL-001 | MEDIUM (warn) | any resource deleted or replaced |
-| GO-EXPOSE-001 | HIGH | graph diff: a resource newly reachable from the internet |
-| GO-IAMW-001 | CRITICAL / HIGH / MEDIUM | graph diff: IAM widened to admin / unknown until apply / other widening |
-| GO-SHADOW-001 | HIGH | the shadow apply on MiniStack failed or could not run |
-| GO-ENGINE-001 | CRITICAL | the OPA engine could not evaluate the plan |
+Every rule belongs to one pillar. Each finding comes with a fix (a catalog field change that
+**Apply Fix** can make, or the Terraform attribute to change).
 
-**Verdict:** any CRITICAL or HIGH flag, or a shadow apply that did not succeed, means
-`BLOCKED_PENDING_REVIEW`. Otherwise `AUTO_APPROVED`.
+| Rule | Pillar | Severity | Fires when |
+|---|---|---|---|
+| GO-SG-001 | security | CRITICAL | SSH (22) or RDP (3389) open to `0.0.0.0/0` or `::/0` (inline, `aws_security_group_rule`, `aws_vpc_security_group_ingress_rule`) |
+| GO-IAM-001 | security | CRITICAL | IAM policy (managed or inline) allows `Action "*"` on `Resource "*"` |
+| GO-S3-001 | security | HIGH | S3 ACL `public-read` / `public-read-write` |
+| GO-RDS-001 | security | HIGH | `aws_db_instance` without `storage_encrypted = true` |
+| GO-S3-002 | security | LOW | S3 bucket with no encryption configuration in code (AWS applies SSE-S3 by default, hence LOW) |
+| GO-EXPOSE-001 | security | HIGH | graph diff: a resource newly reachable from the internet |
+| GO-IAMW-001 | security | CRITICAL / HIGH / MEDIUM | graph diff: IAM widened to admin / unknown until apply / other widening |
+| GO-SHADOW-001 | security | HIGH | the shadow apply on MiniStack failed or could not run (unverified = not certified) |
+| GO-ENGINE-001 | security | CRITICAL | the OPA engine could not evaluate the plan |
+| GO-DEL-001 | reliability | MEDIUM | any resource deleted or replaced |
+| GO-REL-001 | reliability | MEDIUM | RDS instance not Multi-AZ (unset counts as off, the AWS default) |
+| GO-REL-002 | reliability | HIGH | RDS automated backups off (`backup_retention_period = 0`) |
+| GO-REL-003 | reliability | MEDIUM | S3 bucket without versioning (linked by reference or bucket name) |
+| GO-REL-004 | reliability | MEDIUM | exactly one EC2 instance and no load balancer or auto scaling group |
+| GO-REL-005 | reliability | MEDIUM | DynamoDB table without point-in-time recovery |
+| GO-REL-006 | reliability | LOW | instances, databases, functions, tables or load balancers created with no CloudWatch alarm in the plan (one finding per plan) |
+| GO-COST-001 | cost | MEDIUM | EC2 instance above `small` while its stated usage (tag `ExpectedCpuPercent`, a Builder field) is 20% or less |
+| GO-COST-002 | cost | LOW | gp2 storage (EBS volume, root volume, RDS `storage_type`) where gp3 is about 20% cheaper |
+| GO-COST-003 | cost | LOW | a cost-bearing resource with no tags at all (provider `default_tags` count) |
+| GO-PERF-001 | performance | LOW | Lambda at the 128 MB minimum (CPU scales with memory) |
+| GO-PERF-002 | performance | MEDIUM | Lambda timeout at the 900 s maximum, so effectively no limit |
+| GO-PERF-003 | performance | MEDIUM | DynamoDB `PROVISIONED` capacity with no `aws_appautoscaling_target` |
+
+**Verdict:** a CRITICAL or HIGH finding of the **security** pillar, or a shadow apply that did
+not succeed, means `BLOCKED_PENDING_REVIEW`. Otherwise `AUTO_APPROVED`. Reliability, cost and
+performance findings are advisory: they lower their pillar's score and appear with their fix,
+but never block (so a HIGH reliability finding such as GO-REL-002 does not block).
+
+### Pillar scores
+
+The certificate has a `pillars` object (and the Builder's static check returns the same):
+
+```json
+"pillars": {
+  "security":    {"score": 75,  "findings": [{"rule": "GO-RDS-001", "severity": "HIGH", "resource": "aws_db_instance.db", "penalty": 25}]},
+  "reliability": {"score": 95,  "findings": [{"rule": "GO-REL-006", "severity": "LOW", "resource": "aws_db_instance.db", "penalty": 5}]},
+  "cost":        {"score": 100, "findings": []},
+  "performance": {"score": 100, "findings": []}
+}
+```
+
+The formula is deliberately simple, so every number can be checked by hand:
+
+```text
+score(pillar) = max(0, 100 - sum of penalties of that pillar's findings)
+penalty: CRITICAL 40, HIGH 25, MEDIUM 10, LOW 5   (every finding counts, no weighting by resource)
+```
+
+For example, one HIGH and two MEDIUM reliability findings give 100 - 25 - 10 - 10 = 55. The
+score is a summary for people; the verdict never depends on it.
 
 ## Design principle
 
@@ -124,12 +165,27 @@ The static result reads **WOULD BE BLOCKED** or **WOULD BE AUTO-APPROVED** and i
 signed. If you edit after a result, it is marked out of date until the next check.
 
 Each risk flag comes with a suggested fix and the exact field change. **Apply Fix** writes that
-change into the service card and the next check confirms it. Below, the risky design before
-and after applying the fixes (one MEDIUM finding left, so it would be auto-approved):
+change into the service card and the next check confirms it.
 
-| Risky design: 8 flags, each with a fix | After Apply Fix |
+The **Pillar Scores** panel shows security, reliability, cost and performance scores (see
+[Pillar scores](#pillar-scores)) and updates with every static check. On the left, the Risky
+example: security is 0 and the change would be blocked. On the right, an architecture with
+only reliability, cost and performance findings: three pillars drop, but it would still be
+auto-approved, because only security can block.
+
+| Risky example: 11 flags, would be blocked | Advisory findings only: would be approved |
 |---|---|
-| ![Risky](docs/screenshots/builder-risky.png) | ![Fixed](docs/screenshots/builder-fixed.png) |
+| ![Risky](docs/screenshots/builder-pillars-risky.png) | ![Advisory](docs/screenshots/builder-pillars-advisory.png) |
+
+Applying the Risky example's fixes one by one, the static check after each fix gave (real run):
+
+```text
+risky:  Security 0   Reliability 75  Cost 100  Performance 100  WOULD BE BLOCKED
+fix 2:  Security 15  Reliability 75  Cost 100  Performance 100  WOULD BE BLOCKED
+fix 3:  Security 65  Reliability 75  Cost 100  Performance 100  WOULD BE BLOCKED
+fix 4:  Security 90  Reliability 75  Cost 100  Performance 100  WOULD BE AUTO-APPROVED
+fix 6:  Security 90  Reliability 95  Cost 100  Performance 100  WOULD BE AUTO-APPROVED
+```
 
 **Cost** is shown per service. Fixed-price services (EC2, RDS, ALB, alarms) are priced from the
 plan. Usage-based ones (S3, Lambda, DynamoDB) take optional monthly usage inputs (storage GB,
@@ -284,6 +340,9 @@ ALL CHECKS PASSED
   their dimensions, period and tags, so a re-plan always shows drift for them. A plan can also
   apply on MiniStack and still fail on AWS (quotas, IAM, region features), or the reverse. This
   is exactly why the shadow run is a functional check only and never decides security.
+- **Pillar scores are a heuristic.** Penalties are fixed per severity, so ten LOW findings weigh
+  as much as one CRITICAL plus one MEDIUM, and the score says nothing about findings no rule
+  covers. "Oversized EC2" relies on the stated CPU usage, not measured metrics.
 - **Only the rules listed above exist.** GhostOps does not yet check KMS policies, Lambda URLs,
   public RDS snapshots, EKS, CloudFront, IAM trust policies (who can assume a role), S3 bucket
   ACL grants to specific users, `NotAction` in OPA rules, and much more. "No findings" means

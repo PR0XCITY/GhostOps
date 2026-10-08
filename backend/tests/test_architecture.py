@@ -356,3 +356,48 @@ def test_risky_is_blocked_and_its_remediations_fix_it(real_settings):
     after = analyze_architecture(fixed, use_groq=False, shadow_runner=lambda d: ok, cost_result=NO_COST)
     remaining = [f for f in after["blast_radius"]["risk_flags"] if f["severity"] in ("CRITICAL", "HIGH")]
     assert remaining == [] and after["verdict"] == AUTO_APPROVED
+
+
+# --- pillar rules on real generated Terraform (terraform plan only, no MiniStack) ---------------------
+
+ADVISORY = {"services": [
+    {"type": "ec2", "config": {"name": "web", "instance_type": "m5.xlarge", "expected_cpu_percent": 10}},
+    {"type": "s3", "config": {"name": "files", "versioning": False, "encryption": False}},
+    {"type": "rds", "config": {"name": "db", "multi_az": False, "backup_retention_days": 0}},
+    {"type": "lambda", "config": {"name": "fn", "memory_mb": 128, "timeout_s": 900}},
+    {"type": "dynamodb", "config": {"name": "tbl", "billing_mode": "PROVISIONED", "point_in_time_recovery": False}},
+]}
+
+ADVISORY_RULES = {
+    ("reliability", "GO-REL-001"), ("reliability", "GO-REL-002"), ("reliability", "GO-REL-003"),
+    ("reliability", "GO-REL-004"), ("reliability", "GO-REL-005"), ("reliability", "GO-REL-006"),
+    ("security", "GO-S3-002"), ("cost", "GO-COST-001"),
+    ("performance", "GO-PERF-001"), ("performance", "GO-PERF-002"), ("performance", "GO-PERF-003"),
+}
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(shutil.which("terraform") is None, reason="terraform missing")
+def test_pillar_rules_fire_on_generated_terraform_and_apply_fix_clears_them():
+    from app.architecture import check_architecture
+
+    out = check_architecture(ADVISORY, cost_result=NO_COST)
+    found = {(f["pillar"], f["rule"]) for f in out["risk_flags"]}
+    assert found == ADVISORY_RULES, found ^ ADVISORY_RULES
+    assert out["verdict_preview"] == AUTO_APPROVED  # advisory pillars never block
+    assert out["pillars"]["security"]["score"] == 95  # one LOW security finding
+    assert out["pillars"]["reliability"]["score"] == 100 - 25 - 4 * 10 - 5
+    assert out["pillars"]["cost"]["score"] == 90 and out["pillars"]["performance"]["score"] == 75
+    # every fix except "add an alarm" is a catalog change that Apply Fix can make
+    no_change = {f["rule"] for f in out["risk_flags"] if not f["remediation"]["config_change"]}
+    assert no_change == {"GO-REL-006"}
+
+    fixed = apply_config_changes(ADVISORY, [f["remediation"] for f in out["risk_flags"]])
+    after = check_architecture(fixed, cost_result=NO_COST)
+    assert {f["rule"] for f in after["risk_flags"]} == {"GO-REL-006"}
+
+    fixed["services"].append({"type": "cloudwatch_alarm", "config": {"name": "web-cpu"}})
+    clean = check_architecture(fixed, cost_result=NO_COST)
+    assert clean["risk_flags"] == []
+    assert {p: v["score"] for p, v in clean["pillars"].items()} == {
+        "security": 100, "reliability": 100, "cost": 100, "performance": 100}

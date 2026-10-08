@@ -7,6 +7,7 @@ import { SEVERITY_STYLE } from "@/components/badges";
 import { ErrorState, SkeletonBlock } from "@/components/states";
 import { formatUsd } from "@/lib/format";
 import { costByService, type ServiceCost } from "@/lib/builder";
+import { PillarPanel } from "@/components/builder/PillarPanel";
 import type { ArchitectureServiceInfo, Certificate, CheckResult, ConfigChange, RiskFlag, Verdict } from "@/lib/types";
 
 export type Async<T> =
@@ -114,6 +115,7 @@ function FlagList({ flags, onApply, canApply, busy }: {
               <span className={`font-mono text-[11px] font-semibold ${SEVERITY_STYLE[f.severity].text}`}>{f.severity}</span>
               <span className="font-mono text-[11px] text-zinc-500" translate="no">{f.rule}</span>
               <span className="min-w-0 break-all font-mono text-[11px] text-zinc-300" translate="no">{f.resource}</span>
+              <span className="ml-auto text-[10px] text-zinc-500">{f.pillar ?? "security"}</span>
             </div>
             <p className="break-words text-xs leading-relaxed text-zinc-400">{f.message}</p>
             {f.remediation && (
@@ -211,6 +213,7 @@ export function ResultsPanel({
   const costRows = useFull ? fullReady.cost_breakdown ?? [] : checkReady?.cost_breakdown ?? [];
   const costTotal = useFull ? fullReady.cost_delta.monthly_usd : checkReady?.cost_delta.monthly_usd ?? null;
   const costNote = useFull ? fullReady.cost_delta.note : checkReady?.cost_delta.note ?? null;
+  const pillars = (useFull ? fullReady.pillars : undefined) ?? checkReady?.pillars ?? null;
   const perService = costByService(costRows, owners, previewServices);
   const showResults = Boolean(useFull || checkReady);
 
@@ -262,6 +265,12 @@ export function ResultsPanel({
                   </Link>
                 )}
               </div>
+              {pillars && (
+                <Section title="Pillar Scores"
+                         aside={!useFull && !checkFresh ? <span className="text-zinc-500">{check.status === "running" ? "updating…" : "out of date"}</span> : null}>
+                  <PillarPanel pillars={pillars} stale={!useFull && !checkFresh} />
+                </Section>
+              )}
               <Section title="Monthly Cost">
                 <CostPanel total={costTotal} rows={perService} note={costNote} />
               </Section>
