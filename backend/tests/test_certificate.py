@@ -19,7 +19,8 @@ FIXTURES = Path(__file__).parent / "fixtures"
 SECRET = "0123456789abcdef" * 4
 NOW = datetime(2026, 10, 6, 12, 0, 0, tzinfo=timezone.utc)
 TOP_LEVEL = ["plan_id", "timestamp", "resource_changes", "blast_radius", "shadow_run", "cost_delta",
-             "verdict", "risk_explanation", "generated_by", "signature"]
+             "verdict", "risk_explanation", "generated_by", "cost_breakdown", "generated_terraform",
+             "architecture", "signature"]
 
 
 def load(name):
@@ -48,10 +49,14 @@ def test_exact_dashboard_schema():
     assert list(cert) == TOP_LEVEL
     assert set(cert["blast_radius"]) == {"newly_public", "iam_widened", "risk_flags", "graph"}
     assert set(cert["blast_radius"]["graph"]) == {"nodes", "edges"}
-    assert set(cert["shadow_run"]) == {"applied", "resources_created", "error"}
+    assert set(cert["shadow_run"]) == {"applied", "resources_created", "error", "resources", "inventory_error"}
     assert set(cert["cost_delta"]) == {"monthly_usd", "note"}
     assert all(set(r) == {"resource", "action", "before", "after"} for r in cert["resource_changes"])
-    assert all(set(f) == {"rule", "severity", "resource", "message"} for f in cert["blast_radius"]["risk_flags"])
+    flags = cert["blast_radius"]["risk_flags"]
+    assert all(set(f) == {"rule", "severity", "resource", "message", "remediation"} for f in flags)
+    assert all(set(f["remediation"]) == {"summary", "config_change", "generated_by"} for f in flags)
+    assert cert["generated_terraform"] is None and cert["architecture"] is None  # plain plan, not an architecture
+    assert isinstance(cert["cost_breakdown"], list)
     assert cert["timestamp"] == "2026-10-06T12:00:00Z"
     assert cert["generated_by"] == "template"
     assert len(cert["signature"]) == 64 and int(cert["signature"], 16) >= 0
@@ -82,7 +87,8 @@ def test_good_demo_is_auto_approved():
     cert = make("good_plan.json", shadow=shadow_ok(2), cost=cost_result(0.1))
     assert cert["verdict"] == AUTO_APPROVED
     assert cert["blast_radius"]["risk_flags"] == []
-    assert cert["shadow_run"] == {"applied": True, "resources_created": 2, "error": None}
+    assert cert["shadow_run"] == {"applied": True, "resources_created": 2, "error": None,
+                                  "resources": [], "inventory_error": None}
     assert cert["cost_delta"]["monthly_usd"] == 0.1
 
 
@@ -91,7 +97,8 @@ def test_failed_shadow_apply_blocks_a_clean_plan():
         {"rule_id": "GO-SHADOW-001", "severity": "HIGH", "address": "aws_s3_bucket.logs", "message": "failed"}])
     cert = make("good_plan.json", shadow=failed)
     assert cert["verdict"] == BLOCKED
-    assert cert["shadow_run"] == {"applied": False, "resources_created": 0, "error": "Error: boom"}
+    assert cert["shadow_run"] == {"applied": False, "resources_created": 0, "error": "Error: boom",
+                                  "resources": [], "inventory_error": None}
     assert cert["blast_radius"]["risk_flags"][0]["rule"] == "GO-SHADOW-001"
 
 

@@ -14,6 +14,8 @@ GET  /verify/{plan_id}                re-check the stored certificate's signatur
 GET  /demos, POST /analyze/demo/{bad|good}   run a bundled demo (no paths from the browser)
 GET  /catalog                         services the Terraform generator supports, with form fields
 POST /architectures/preview           {"services": [{"type", "config"}]} -> generated Terraform only
+POST /architectures/analyze           same body (+ per-service "usage") -> generate, plan, full pipeline,
+                                      stored certificate (?use_groq=false for template text)
 GET  /health
 
 CORS allows the dashboard at http://localhost:3000. Request bodies and settings
@@ -33,7 +35,9 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, ValidationError
 
+from app.architecture import analyze_architecture
 from app.catalog import catalog
+from app.shadow import ShadowError
 from app.certificate import CertificateError, build_certificate, verify
 from app.generator import ArchitectureError, generate
 from app.config import check_required, db_path, install_secret_filter
@@ -96,7 +100,8 @@ def _tf_dir(value: str | None) -> str | None:
     return value
 
 
-def create_app(store: Store | None = None, analyzer: Analyzer = build_certificate) -> FastAPI:
+def create_app(store: Store | None = None, analyzer: Analyzer = build_certificate,
+               architecture_analyzer: Callable[..., dict[str, Any]] = analyze_architecture) -> FastAPI:
     check_required()  # refuse to start without the signing secret
 
     @asynccontextmanager
@@ -174,6 +179,27 @@ def create_app(store: Store | None = None, analyzer: Analyzer = build_certificat
             "resources": generated.resources,
             "services": [{"type": s.type, "name": s.slug, "config": s.config} for s in generated.services],
         }
+
+    @app.post("/architectures/analyze")
+    async def analyze_architecture_endpoint(request: Request, use_groq: bool = True) -> dict[str, Any]:
+        """Generate Terraform for an architecture and run the full pipeline; returns the certificate."""
+        try:
+            body = await request.json()
+        except ValueError:
+            raise HTTPException(422, "body must be JSON: {\"services\": [{\"type\", \"config\", \"usage\"}]}") from None
+        try:
+            generate(body)  # validate first: a 422 must not wait for Terraform
+        except ArchitectureError as exc:
+            raise HTTPException(422, {"message": "invalid architecture", "errors": exc.errors}) from None
+        try:
+            cert = await run_in_threadpool(architecture_analyzer, body, use_groq=use_groq)
+        except ShadowError as exc:
+            raise HTTPException(500, f"could not plan the generated Terraform: {exc}") from None
+        except CertificateError as exc:
+            raise HTTPException(500, str(exc)) from None
+        app.state.store.save_certificate(cert)
+        log.info("analyzed architecture plan %s verdict=%s", cert["plan_id"], cert["verdict"])
+        return cert
 
     @app.get("/demos")
     def list_demos() -> list[dict[str, str]]:

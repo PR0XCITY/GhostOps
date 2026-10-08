@@ -13,6 +13,10 @@ Only services that work in at least one of MiniStack (shadow run) or Infracost
                      free         supported and reported as free
                      unsupported  Infracost does not price it
   pricing_note       the measured figures behind that value
+  usage_fields       (usage-priced services only) monthly usage inputs, taken from the
+                     architecture JSON `usage` object and passed to Infracost through
+                     a usage file (`infracost_key` is the usage-file key);
+                     `usage_resource` is the Terraform type they apply to
 
 Each field: name, label, kind (select | int | bool | cidr | string | list),
 default, plus options / min / max / help. Defaults are deliberately safe (nothing
@@ -30,6 +34,12 @@ PRIVATE_CIDR = "10.0.0.0/16"
 
 def _f(name: str, label: str, kind: str, default: Any, **extra: Any) -> dict[str, Any]:
     return {"name": name, "label": label, "kind": kind, "default": default, **extra}
+
+
+def _u(name: str, label: str, default: int | None, maximum: int, infracost_key: str, **extra: Any) -> dict[str, Any]:
+    """A usage input for Infracost: architecture JSON `usage.<name>` -> usage file `<infracost_key>`."""
+    return {"name": name, "label": label, "kind": "int", "default": default, "min": 0, "max": maximum,
+            "infracost_key": infracost_key, **extra}
 
 
 NAME = _f("name", "Name", "string", "", pattern=r"^[a-z][a-z0-9-]{1,30}$",
@@ -69,7 +79,14 @@ CATALOG: dict[str, dict[str, Any]] = {
             _f("versioning", "Versioning", "bool", True),
             _f("encryption", "Server-side encryption (AES-256)", "bool", True),
             _f("size_gb", "Expected size (GB)", "int", 10, min=0, max=100000,
-               help="Recorded as a tag only: Terraform has no bucket size, and Infracost prices storage at zero usage."),
+               help="Tagged on the bucket and used as usage.storage_gb for pricing unless that is given."),
+        ],
+        "usage_resource": "aws_s3_bucket",
+        "usage_fields": [
+            _u("storage_gb", "Standard storage (GB)", None, 10_000_000, "standard.storage_gb",
+               help="Blank = the bucket's size_gb."),
+            _u("monthly_put_requests", "PUT/COPY/POST/LIST requests per month", 0, 10**12, "standard.monthly_tier_1_requests"),
+            _u("monthly_get_requests", "GET and other requests per month", 0, 10**12, "standard.monthly_tier_2_requests"),
         ],
     },
     "rds": {
@@ -137,6 +154,11 @@ CATALOG: dict[str, dict[str, Any]] = {
             _f("memory_mb", "Memory (MB)", "int", 128, min=128, max=10240),
             _f("timeout_s", "Timeout (s)", "int", 10, min=1, max=900),
         ],
+        "usage_resource": "aws_lambda_function",
+        "usage_fields": [
+            _u("monthly_requests", "Invocations per month", 0, 10**12, "monthly_requests"),
+            _u("request_duration_ms", "Average duration (ms)", 100, 900_000, "request_duration_ms"),
+        ],
     },
     "dynamodb": {
         "label": "DynamoDB table",
@@ -152,6 +174,14 @@ CATALOG: dict[str, dict[str, Any]] = {
             _f("write_capacity", "Write capacity (provisioned only)", "int", 5, min=1, max=40000),
             _f("hash_key", "Partition key", "string", "id", pattern=r"^[A-Za-z_][A-Za-z0-9_.-]{0,63}$"),
             _f("point_in_time_recovery", "Point-in-time recovery", "bool", True),
+        ],
+        "usage_resource": "aws_dynamodb_table",
+        "usage_fields": [
+            _u("monthly_write_request_units", "Write request units per month (on-demand)", 0, 10**13,
+               "monthly_write_request_units"),
+            _u("monthly_read_request_units", "Read request units per month (on-demand)", 0, 10**13,
+               "monthly_read_request_units"),
+            _u("storage_gb", "Table storage (GB)", 0, 10_000_000, "storage_gb"),
         ],
     },
     "cloudwatch_alarm": {
@@ -196,3 +226,7 @@ def catalog() -> list[dict[str, Any]]:
 
 def defaults(service_type: str) -> dict[str, Any]:
     return {f["name"]: deepcopy(f["default"]) for f in CATALOG[service_type]["fields"]}
+
+
+def usage_defaults(service_type: str) -> dict[str, Any]:
+    return {f["name"]: f["default"] for f in CATALOG[service_type].get("usage_fields", [])}

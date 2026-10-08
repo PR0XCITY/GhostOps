@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -151,14 +152,41 @@ def _decimal(value: Any) -> Decimal | None:
         return None
 
 
-def scan(planned_values: dict[str, Any], *, terraform_version: str = "1.0.0", timeout: float = 300) -> dict[str, Any]:
-    """Run `infracost scan` on a plan document containing `planned_values`."""
+def to_yaml(data: dict[str, Any], indent: int = 0) -> str:
+    """Minimal YAML for nested dicts of numbers/strings (Infracost usage + config files)."""
+    lines = []
+    for key, value in data.items():
+        if not re.fullmatch(r"[A-Za-z0-9_.\[\]\-]+", str(key)):
+            raise CostError(f"unsupported YAML key {key!r}")
+        if isinstance(value, dict):
+            lines.append(f"{' ' * indent}{key}:")
+            lines.append(to_yaml(value, indent + 2))
+        elif isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            raise CostError(f"unsupported YAML value for {key}: {value!r}")
+        else:
+            lines.append(f"{' ' * indent}{key}: {json.dumps(value)}")
+    return "\n".join(lines)
+
+
+def scan(planned_values: dict[str, Any], *, terraform_version: str = "1.0.0", timeout: float = 300,
+         usage_file: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+    """Run `infracost scan` on a plan document containing `planned_values`.
+
+    usage_file: {resource address: usage keys} for usage-priced resources. Infracost v2
+    has no --usage-file flag; it reads the usage file named in an infracost.yml project
+    config next to the plan (verified: a bare infracost-usage.yml is ignored).
+    """
     doc = {"format_version": "1.2", "terraform_version": terraform_version, "planned_values": planned_values}
     args = ["scan", "plan.json", "--json", "--no-color", "--currency", "USD"]
     if os.environ.get("INFRACOST_ORG"):
         args += ["--org", os.environ["INFRACOST_ORG"]]
     with tempfile.TemporaryDirectory(prefix="ghostops-cost-") as tmp:
         Path(tmp, "plan.json").write_text(json.dumps(doc), encoding="utf-8")
+        if usage_file:
+            Path(tmp, "usage.yml").write_text(
+                to_yaml({"version": "0.1", "resource_usage": usage_file}) + "\n", encoding="utf-8")
+            Path(tmp, "infracost.yml").write_text(
+                'version: 0.1\nprojects:\n  - path: plan.json\n    usage_file: usage.yml\n', encoding="utf-8")
         code, stdout, stderr = _run_infracost(args, cwd=tmp, timeout=timeout)
     if code != 0:
         raise CostError(f"infracost scan failed (exit {code}): {(stderr + stdout).strip()[-800:]}")
@@ -179,7 +207,7 @@ def _walk_components(resource: dict[str, Any]) -> list[dict[str, Any]]:
     return comps
 
 
-def price_resource(resource: dict[str, Any]) -> tuple[Decimal | None, str | None]:
+def price_resource(resource: dict[str, Any], usage_given: bool = False) -> tuple[Decimal | None, str | None]:
     """(monthly USD or None, note) for one resource from Infracost output."""
     rtype = resource.get("type", "resource")
     if resource.get("is_free"):
@@ -203,18 +231,23 @@ def price_resource(resource: dict[str, Any]) -> tuple[Decimal | None, str | None
     if zero_usage:
         names = list(dict.fromkeys(zero_usage))
         examples = "; ".join(names[:3]) + ("; ..." if len(names) > 3 else "")
-        notes.append(f"{len(zero_usage)} usage-based cost components priced at zero usage ({examples}); "
-                     "the real cost depends on usage, so this is a lower bound.")
+        if usage_given:
+            notes.append(f"Priced with the usage assumptions given; {len(zero_usage)} component(s) without an "
+                         f"assumption are priced at zero usage ({examples}).")
+        else:
+            notes.append(f"{len(zero_usage)} usage-based cost components priced at zero usage ({examples}); "
+                         "the real cost depends on usage, so this is a lower bound.")
     return sum(known, _ZERO), " ".join(notes) or None
 
 
-def _prices(scan_result: dict[str, Any] | None) -> tuple[dict[str, tuple[Decimal | None, str | None]], str | None]:
+def _prices(scan_result: dict[str, Any] | None,
+            usage_addresses: set[str] = frozenset()) -> tuple[dict[str, tuple[Decimal | None, str | None]], str | None]:
     if scan_result is None:
         return {}, None
     prices = {}
     for project in scan_result["projects"]:
         for res in project.get("resources") or []:
-            prices[res["name"]] = price_resource(res)
+            prices[res["name"]] = price_resource(res, usage_given=res["name"] in usage_addresses)
     return prices, scan_result.get("summary", {}).get("total_monthly_cost")
 
 
@@ -234,8 +267,13 @@ def _usd(value: Decimal | None) -> float | None:
     return None if value is None else float(value.quantize(Decimal("0.0001")))
 
 
-def plan_cost(plan: dict[str, Any]) -> dict[str, Any]:
+def plan_cost(plan: dict[str, Any], *, usage_file: dict[str, dict[str, Any]] | None = None,
+              usage_inputs: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+    """Cost delta of a plan. usage_file goes to Infracost (both sides, same assumptions);
+    usage_inputs (flat, human-readable) is echoed per resource as usage_assumptions."""
     changes = parse_plan(plan)
+    usage_inputs = usage_inputs or {}
+    usage_addresses = set(usage_file or {})
     tf_version = str(plan.get("terraform_version", "1.0.0"))
     before_values = (plan.get("prior_state") or {}).get("values")
     after_values = plan.get("planned_values")
@@ -243,9 +281,11 @@ def plan_cost(plan: dict[str, Any]) -> dict[str, Any]:
         check_login()
 
     before_prices, before_reported = _prices(
-        scan(before_values, terraform_version=tf_version) if _has_resources(before_values) else None)
+        scan(before_values, terraform_version=tf_version, usage_file=usage_file)
+        if _has_resources(before_values) else None, usage_addresses)
     after_prices, after_reported = _prices(
-        scan(after_values, terraform_version=tf_version) if _has_resources(after_values) else None)
+        scan(after_values, terraform_version=tf_version, usage_file=usage_file)
+        if _has_resources(after_values) else None, usage_addresses)
 
     def side(exists: bool, prices: dict, address: str) -> tuple[Decimal | None, str | None]:
         if not exists:
@@ -272,6 +312,7 @@ def plan_cost(plan: dict[str, Any]) -> dict[str, Any]:
             "after_usd": _usd(after),
             "delta_usd": _usd(after - before) if before is not None and after is not None else None,
             "monthly_usd": _usd(after),
+            "usage_assumptions": dict(usage_inputs.get(re.sub(r"\[[^\]]*\]", "", c.address), {})),
             "note": note,
         })
 

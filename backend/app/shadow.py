@@ -5,7 +5,8 @@ run_shadow(dir) does, under a process-wide lock (MiniStack is shared):
   2. add ghostops_shadow_override.tf, which forces the default aws provider to
      MiniStack with fake keys and a local backend (Terraform override-file merge),
   3. reset MiniStack (POST /_ministack/reset) so the run starts from empty,
-  4. terraform init -> plan -> apply, then read the resulting state,
+  4. terraform init -> plan -> apply, then read the resulting state and list what
+     really exists in MiniStack with boto3 (inventory(): independent of the state),
   5. reset MiniStack again and delete the workspace, whatever happened.
 
 Credential safety, in depth: besides the override, Terraform runs with every
@@ -66,7 +67,10 @@ class ShadowError(RuntimeError):
 class ShadowResult:
     success: bool
     stage: str  # "complete", or the stage that failed: "init" | "plan" | "apply"
-    resources: list[dict[str, Any]] = field(default_factory=list)
+    resources: list[dict[str, Any]] = field(default_factory=list)  # from Terraform state
+    # What boto3 actually found in MiniStack after the apply, before teardown.
+    inventory: list[dict[str, Any]] = field(default_factory=list)
+    inventory_error: str | None = None
     planned_changes: int = 0
     error: str | None = None
     findings: list[dict[str, Any]] = field(default_factory=list)
@@ -92,6 +96,85 @@ def _ministack(path: str, method: str = "GET", timeout: float = 10) -> dict[str,
         return json.loads(body) if body else {}
     except ValueError:
         return {}
+
+
+def _client(service: str):
+    import boto3  # backend dependency; imported lazily so the module loads without it
+
+    return boto3.client(service, endpoint_url=MINISTACK_URL, region_name="us-east-1",
+                        aws_access_key_id="test", aws_secret_access_key="test")
+
+
+def _pages(client, op: str, key: str, **kwargs: Any) -> list[dict[str, Any]]:
+    if client.can_paginate(op):
+        return [item for page in client.get_paginator(op).paginate(**kwargs) for item in page.get(key, [])]
+    return getattr(client, op)(**kwargs).get(key, [])
+
+
+def inventory() -> tuple[list[dict[str, Any]], str | None]:
+    """Resources that exist in MiniStack, found with boto3 (independent of Terraform state).
+
+    Each item is {"type": <Terraform resource type>, "id": <AWS id/name/ARN>}. MiniStack's
+    built-in defaults (default VPC, its subnets/security group/gateway) are excluded, and
+    the shadow run resets MiniStack first, so everything listed was created by this run.
+    Errors in one service do not hide the others; they are joined into the second value.
+    """
+    found: list[dict[str, Any]] = []
+    errors: list[str] = []
+
+    def collect(service: str, fn) -> None:
+        try:
+            found.extend(fn(_client(service)))
+        except Exception as exc:  # report, don't hide the other services
+            errors.append(f"{service}: {type(exc).__name__}: {str(exc)[:160]}")
+
+    def ec2(c):
+        vpcs = _pages(c, "describe_vpcs", "Vpcs")
+        default_vpcs = {v["VpcId"] for v in vpcs if v.get("IsDefault")}
+        out = [{"type": "aws_vpc", "id": v["VpcId"]} for v in vpcs if not v.get("IsDefault")]
+        out += [{"type": "aws_subnet", "id": s["SubnetId"]} for s in _pages(c, "describe_subnets", "Subnets")
+                if s.get("VpcId") not in default_vpcs and not s.get("DefaultForAz")]
+        out += [{"type": "aws_security_group", "id": g["GroupId"]}
+                for g in _pages(c, "describe_security_groups", "SecurityGroups") if g.get("GroupName") != "default"]
+        out += [{"type": "aws_internet_gateway", "id": g["InternetGatewayId"]}
+                for g in _pages(c, "describe_internet_gateways", "InternetGateways")
+                if not {a.get("VpcId") for a in g.get("Attachments", [])} & default_vpcs]
+        out += [{"type": "aws_instance", "id": i["InstanceId"]}
+                for r in _pages(c, "describe_instances", "Reservations") for i in r.get("Instances", [])
+                if i.get("State", {}).get("Name") not in ("terminated", "shutting-down")]
+        out += [{"type": "aws_ebs_volume", "id": v["VolumeId"]} for v in _pages(c, "describe_volumes", "Volumes")]
+        return out
+
+    def elbv2(c):
+        lbs = _pages(c, "describe_load_balancers", "LoadBalancers")
+        out = [{"type": "aws_lb", "id": lb["LoadBalancerArn"]} for lb in lbs]
+        out += [{"type": "aws_lb_target_group", "id": t["TargetGroupArn"]}
+                for t in _pages(c, "describe_target_groups", "TargetGroups")]
+        for lb in lbs:
+            out += [{"type": "aws_lb_listener", "id": li["ListenerArn"]}
+                    for li in _pages(c, "describe_listeners", "Listeners", LoadBalancerArn=lb["LoadBalancerArn"])]
+        return out
+
+    def iam(c):
+        out = [{"type": "aws_iam_role", "id": r["RoleName"]} for r in _pages(c, "list_roles", "Roles")
+               if not r.get("Path", "/").startswith("/aws-service-role/")]
+        out += [{"type": "aws_iam_policy", "id": p["Arn"]} for p in _pages(c, "list_policies", "Policies", Scope="Local")]
+        return out
+
+    collect("ec2", ec2)
+    collect("s3", lambda c: [{"type": "aws_s3_bucket", "id": b["Name"]} for b in c.list_buckets().get("Buckets", [])])
+    # id = DbiResourceId, the same id Terraform's state uses for aws_db_instance; name = identifier
+    collect("rds", lambda c: [{"type": "aws_db_instance", "id": d.get("DbiResourceId") or d["DBInstanceIdentifier"],
+                               "name": d["DBInstanceIdentifier"]}
+                              for d in _pages(c, "describe_db_instances", "DBInstances")])
+    collect("iam", iam)
+    collect("lambda", lambda c: [{"type": "aws_lambda_function", "id": f["FunctionName"]}
+                                 for f in _pages(c, "list_functions", "Functions")])
+    collect("dynamodb", lambda c: [{"type": "aws_dynamodb_table", "id": t} for t in _pages(c, "list_tables", "TableNames")])
+    collect("cloudwatch", lambda c: [{"type": "aws_cloudwatch_metric_alarm", "id": a["AlarmName"]}
+                                     for a in _pages(c, "describe_alarms", "MetricAlarms")])
+    collect("elbv2", elbv2)
+    return sorted(found, key=lambda r: (r["type"], r["id"])), "; ".join(errors) or None
 
 
 def ministack_version() -> str:
@@ -263,10 +346,35 @@ def _run_stages(tf) -> ShadowResult:
     applied = tf("apply", "apply", "-input=false", "-no-color", "-auto-approve", PLAN_FILE)
     state = tf("apply", "show", "-json", "-no-color")  # also after a failed apply: partial state
     resources = _state_resources(json.loads(state.stdout)) if not isinstance(state, ShadowResult) else []
+    found, inventory_error = inventory()  # what MiniStack really holds, before the reset
     if isinstance(applied, ShadowResult):
         applied.resources, applied.planned_changes = resources, planned
+        applied.inventory, applied.inventory_error = found, inventory_error
         return applied
-    return ShadowResult(True, "complete", resources=resources, planned_changes=planned)
+    return ShadowResult(True, "complete", resources=resources, planned_changes=planned,
+                        inventory=found, inventory_error=inventory_error)
+
+
+def plan_json(source_dir: str | Path, *, timeout: float = 600) -> dict[str, Any]:
+    """`terraform show -json` of a fresh plan for source_dir, made in a scrubbed temp workspace.
+
+    Uses the same MiniStack override and credential-free environment as the shadow run;
+    a create-only plan does not need MiniStack itself. Raises ShadowError on failure.
+    """
+    source = Path(source_dir).resolve()
+    terraform = shutil.which("terraform")
+    if not terraform:
+        raise ShadowError("terraform not found on PATH")
+    PLUGIN_CACHE.mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="ghostops-plan-") as tmp:
+        work = _prepare_workspace(source, Path(tmp))
+        env = shadow_env(Path(tmp))
+        for args in (["init", "-input=false"], ["plan", "-input=false", f"-out={PLAN_FILE}"], ["show", "-json", PLAN_FILE]):
+            proc = subprocess.run([terraform, *args, "-no-color"], cwd=work, env=env, capture_output=True, text=True,
+                                  encoding="utf-8", errors="replace", timeout=timeout)
+            if proc.returncode != 0:
+                raise ShadowError(f"terraform {args[0]} failed: {_tail(proc.stderr or proc.stdout, 15)}")
+        return json.loads(proc.stdout)
 
 
 if __name__ == "__main__":

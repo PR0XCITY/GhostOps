@@ -45,6 +45,16 @@ class Service:
     slug: str        # AWS-facing name part, e.g. "web-tier"
     ident: str       # Terraform identifier, e.g. "web_tier"
     config: dict[str, Any]
+    usage: dict[str, Any] = field(default_factory=dict)  # Infracost usage inputs (usage-priced types)
+
+    @property
+    def shadow_supported(self) -> bool:
+        return bool(CATALOG[self.type]["shadow_supported"])
+
+    @property
+    def usage_address(self) -> str | None:
+        rtype = CATALOG[self.type].get("usage_resource")
+        return f"{rtype}.{self.ident}" if rtype else None
 
 
 @dataclass
@@ -52,12 +62,45 @@ class GeneratedTerraform:
     main_tf: str
     services: list[Service]
     resources: list[str] = field(default_factory=list)
+    owners: dict[str, Service] = field(default_factory=dict)  # resource address -> service that made it
+    uid: str = ""
 
     def write(self, directory: str | Path) -> Path:
         path = Path(directory)
         path.mkdir(parents=True, exist_ok=True)
         (path / "main.tf").write_text(self.main_tf, encoding="utf-8", newline="\n")
         return path / "main.tf"
+
+    def owner(self, address: str) -> Service | None:
+        """Service owning a resource address (instance keys like [0] are ignored)."""
+        return self.owners.get(re.sub(r"\[[^\]]*\]", "", address))
+
+    def shadow_subset(self) -> GeneratedTerraform | None:
+        """Terraform for the shadow_supported services only (same names), or None if there are none."""
+        supported = [s for s in self.services if s.shadow_supported]
+        if not supported:
+            return None
+        return self if len(supported) == len(self.services) else _render(supported, self.uid)
+
+    def usage_inputs(self) -> dict[str, dict[str, Any]]:
+        """{resource address: {usage field: value}} for usage-priced services."""
+        return {s.usage_address: dict(s.usage) for s in self.services if s.usage_address}
+
+    def usage_file(self) -> dict[str, dict[str, Any]]:
+        """The same inputs keyed the way Infracost's usage file expects (nested keys)."""
+        out: dict[str, dict[str, Any]] = {}
+        for s in self.services:
+            if not s.usage_address:
+                continue
+            entry: dict[str, Any] = {}
+            for spec in CATALOG[s.type]["usage_fields"]:
+                node = entry
+                *parents, leaf = spec["infracost_key"].split(".")
+                for p in parents:
+                    node = node.setdefault(p, {})
+                node[leaf] = s.usage[spec["name"]]
+            out[s.usage_address] = entry
+        return out
 
 
 # --- HCL helpers -------------------------------------------------------------------------
@@ -134,6 +177,30 @@ def _check_field(spec: dict[str, Any], value: Any) -> str | None:
     return f"unknown field kind {kind}"
 
 
+def _validate_usage(stype: str, usage: Any, config: dict[str, Any], i: int,
+                    errors: list[dict[str, Any]]) -> dict[str, Any]:
+    specs = {f["name"]: f for f in CATALOG[stype].get("usage_fields", [])}
+    if usage is None:
+        usage = {}
+    if not isinstance(usage, dict):
+        errors.append({"service": i, "field": "usage", "message": "must be an object"})
+        return {}
+    if usage and not specs:
+        errors.append({"service": i, "field": "usage",
+                       "message": f"{stype} has no usage inputs (only S3, Lambda and DynamoDB are usage-priced)"})
+        return {}
+    for unknown in sorted(set(usage) - set(specs)):
+        errors.append({"service": i, "field": f"usage.{unknown}", "message": f"unknown usage input for {stype}"})
+    merged = {name: usage.get(name, spec["default"]) for name, spec in specs.items()}
+    if stype == "s3" and merged["storage_gb"] is None:
+        merged["storage_gb"] = config.get("size_gb", 0)  # the bucket's expected size
+    for name, spec in specs.items():
+        problem = _check_field(spec, merged[name])
+        if problem:
+            errors.append({"service": i, "field": f"usage.{name}", "message": problem})
+    return merged
+
+
 def validate(architecture: Any) -> list[Service]:
     if not isinstance(architecture, dict) or not isinstance(architecture.get("services"), list):
         raise ArchitectureError([{"service": "-", "field": "services", "message": "body must be {\"services\": [...]}"}])
@@ -167,12 +234,14 @@ def validate(architecture: Any) -> list[Service]:
             if net.version != 4 or not 16 <= net.prefixlen <= 24:
                 errors.append({"service": i, "field": "cidr_block", "message": "must be an IPv4 range from /16 to /24"})
 
+        usage = _validate_usage(stype, item.get("usage"), merged, i, errors)
+
         counters[stype] = counters.get(stype, 0) + 1
         slug = merged["name"] or f"{stype.replace('_', '-')}-{counters[stype]}"
         if slug in seen:
             errors.append({"service": i, "field": "name", "message": f"duplicate name {slug!r} (also services[{seen[slug]}])"})
         seen[slug] = i
-        services.append(Service(stype, slug, slug.replace("-", "_"), {**merged, "name": slug}))
+        services.append(Service(stype, slug, slug.replace("-", "_"), {**merged, "name": slug}, usage))
     if errors:
         raise ArchitectureError(errors)
     return services
@@ -585,12 +654,22 @@ provider "aws" {{
 _RESOURCE = re.compile(r'^(resource|data) "([a-z0-9_]+)" "([a-z0-9_]+)"', re.M)
 
 
+def _addresses(hcl: str) -> list[str]:
+    return [f"{'data.' if kind == 'data' else ''}{rtype}.{name}" for kind, rtype, name in _RESOURCE.findall(hcl)]
+
+
+def _render(services: list[Service], uid: str) -> GeneratedTerraform:
+    chunks, owners = [], {}
+    for s in services:
+        hcl = RENDERERS[s.type](s, uid)
+        owners.update({address: s for address in _addresses(hcl)})
+        chunks.append(f"# --- {s.type}: {s.slug} " + "-" * max(4, 60 - len(s.type) - len(s.slug)) + "\n\n" + hcl)
+    main_tf = _header(services) + "\n" + "\n".join(chunks)
+    return GeneratedTerraform(main_tf=main_tf, services=services, resources=_addresses(main_tf), owners=owners, uid=uid)
+
+
 def generate(architecture: Any) -> GeneratedTerraform:
     services = validate(architecture)
     # Stable short id for globally unique names (S3): same architecture -> same names.
     uid = hashlib.sha256(json.dumps([[s.type, s.config] for s in services], sort_keys=True).encode()).hexdigest()[:6]
-    body = "\n".join(f"# --- {s.type}: {s.slug} " + "-" * max(4, 60 - len(s.type) - len(s.slug)) + "\n\n"
-                     + RENDERERS[s.type](s, uid) for s in services)
-    main_tf = _header(services) + "\n" + body
-    resources = [f"{'data.' if kind == 'data' else ''}{rtype}.{name}" for kind, rtype, name in _RESOURCE.findall(main_tf)]
-    return GeneratedTerraform(main_tf=main_tf, services=services, resources=resources)
+    return _render(services, uid)

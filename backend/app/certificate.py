@@ -171,36 +171,65 @@ def graph_flags(blast: dict[str, Any]) -> list[dict[str, str]]:
     return flags
 
 
+def _not_run(error: str) -> dict[str, Any]:
+    return {"applied": False, "resources_created": 0, "error": error, "resources": [], "inventory_error": None}
+
+
 def shadow_section(tf_dir: str | Path | None, result: ShadowResult | None) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    """shadow_run: applied / resources_created (Terraform state) / error, plus `resources`:
+    what boto3 actually found in MiniStack before teardown ({type, id}), and inventory_error."""
     if result is None:
         if tf_dir is None:
             error = "Shadow run not performed: no Terraform directory was provided."
-            return {"applied": False, "resources_created": 0, "error": error}, [
-                flag("GO-SHADOW-001", "HIGH", "(shadow run)", error + " The change is unverified.")]
+            return _not_run(error), [flag("GO-SHADOW-001", "HIGH", "(shadow run)", error + " The change is unverified.")]
         try:
             result = run_shadow(tf_dir)
         except ShadowError as exc:
             error = f"Shadow run could not start: {exc}"
-            return {"applied": False, "resources_created": 0, "error": error}, [
-                flag("GO-SHADOW-001", "HIGH", "(shadow run)", error)]
-    section = {"applied": result.success, "resources_created": len(result.resources), "error": result.error}
+            return _not_run(error), [flag("GO-SHADOW-001", "HIGH", "(shadow run)", error)]
+    section = {"applied": result.success, "resources_created": len(result.resources), "error": result.error,
+               "resources": list(result.inventory), "inventory_error": result.inventory_error}
     flags = [flag(f["rule_id"], f["severity"], f["address"], f["message"]) for f in result.findings]
     return section, flags
 
 
-def cost_section(plan: dict[str, Any], result: dict[str, Any] | None = None) -> dict[str, Any]:
+def cost_section(plan: dict[str, Any], result: dict[str, Any] | None = None, *, generated=None
+                 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """(cost_delta, cost_breakdown). Usage inputs of a generated architecture go to Infracost."""
     if result is None:
         try:
-            result = plan_cost(plan)
+            if generated is not None:
+                result = plan_cost(plan, usage_file=generated.usage_file(), usage_inputs=generated.usage_inputs())
+            else:
+                result = plan_cost(plan)
         except CostError as exc:
-            return {"monthly_usd": None, "note": f"Cost not estimated: {exc}"}
+            return {"monthly_usd": None, "note": f"Cost not estimated: {exc}"}, []
     notes = []
     if not result["complete"]:
         notes.append(f"Not priced by Infracost (excluded from the total): {', '.join(result['unpriced'])}.")
-    usage = [r["address"] for r in result["resources"] if r.get("note") and "zero usage" in r["note"]]
+    usage = [r["address"] for r in result["resources"] if r.get("note") and "zero usage" in r["note"]
+             and not r.get("usage_assumptions")]
     if usage:
         notes.append(f"Usage-based costs priced at zero usage, so the real cost may be higher: {', '.join(usage)}.")
-    return {"monthly_usd": result["monthly_delta_usd"], "note": " ".join(notes) or None}
+    breakdown = [
+        {"resource": r["address"], "type": r.get("type"), "action": r.get("action"),
+         "monthly_usd": r.get("monthly_usd"), "delta_usd": r.get("delta_usd"),
+         "usage_assumptions": r.get("usage_assumptions") or {}, "note": r.get("note")}
+        for r in result["resources"]
+    ]
+    return {"monthly_usd": result["monthly_delta_usd"], "note": " ".join(notes) or None}, breakdown
+
+
+def architecture_section(generated) -> dict[str, Any] | None:
+    """Per-service analysis mode: static_only services were left out of the shadow apply."""
+    if generated is None:
+        return None
+    return {"services": [
+        {"type": s.type, "name": s.slug, "shadow_supported": s.shadow_supported,
+         "analysis": "shadow_and_static" if s.shadow_supported else "static_only",
+         "config": s.config, "usage": s.usage}
+        for s in generated.services
+    ]}
 
 
 def decide(flags: list[dict[str, str]], shadow: dict[str, Any]) -> str:
@@ -328,14 +357,21 @@ def build_certificate(
     use_groq: bool = True,
     secret: str | None = None,
     now: datetime | None = None,
+    generated=None,
 ) -> dict[str, Any]:
+    """generated: the GeneratedTerraform when the plan came from a catalog architecture
+    (adds generated_terraform, architecture, usage-based pricing, config-level remediations)."""
+    from app.remediation import remediate
+
     changes = parse_plan(plan)  # PlanParseError for anything malformed
     secret_bytes = _secret(secret)  # fail before doing slow work if we cannot sign
     blast = analyze_blast_radius(plan)
     shadow, shadow_flags = shadow_section(tf_dir, shadow_result)
     flags = policy_flags(plan) + graph_flags(blast) + shadow_flags
     flags.sort(key=lambda f: (SEVERITY_ORDER.get(f["severity"], 9), f["rule"], f["resource"], f["message"]))
-    cost = cost_section(plan, cost_result)
+    for f, remediation in zip(flags, remediate(flags, generated, use_groq=use_groq)):
+        f["remediation"] = remediation
+    cost, cost_breakdown = cost_section(plan, cost_result, generated=generated)
     verdict = decide(flags, shadow)
 
     explanation = groq_explain(explainer_facts(flags, shadow, verdict, len(changes))) if use_groq else None
@@ -358,6 +394,9 @@ def build_certificate(
         "verdict": verdict,
         "risk_explanation": explanation,
         "generated_by": generated_by,
+        "cost_breakdown": cost_breakdown,
+        "generated_terraform": generated.main_tf if generated is not None else None,
+        "architecture": architecture_section(generated),
     }
     cert["signature"] = sign(cert, secret=secret_bytes.decode("utf-8"))
     return cert
