@@ -1,6 +1,6 @@
 """Risk Certificate: every analysis combined into one signed JSON document.
 
-Field names are a contract with the dashboard (listed in CLAUDE.md):
+Field names are a contract with the dashboard (dashboard/lib/types.ts mirrors them):
   plan_id, timestamp, resource_changes[{resource, action, before, after}],
   blast_radius{newly_public, iam_widened, risk_flags[{rule, severity, resource,
   message}], graph{nodes, edges}}, shadow_run{applied, resources_created, error},

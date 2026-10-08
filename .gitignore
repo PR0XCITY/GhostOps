@@ -27,7 +27,8 @@ node_modules/
 *.tfstate*
 *.tfplan
 
-# local AI-agent skills: tooling, not part of GhostOps (third-party content)
+# local AI-agent tooling and notes: not part of GhostOps
 .agents/
-.claude/skills/
+.claude/
+CLAUDE.md
 skills-lock.json

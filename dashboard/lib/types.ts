@@ -1,4 +1,4 @@
-// Mirrors the Risk Certificate contract in CLAUDE.md / backend/app/certificate.py.
+// Mirrors the Risk Certificate contract in backend/app/certificate.py.
 // Field names must not change: the backend signs exactly this shape.
 
 export type Verdict = "AUTO_APPROVED" | "BLOCKED_PENDING_REVIEW";
