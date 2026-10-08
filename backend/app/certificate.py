@@ -16,7 +16,10 @@ risk_flags  OPA findings, plus flags derived from the graph diff (a resource
 verdict     BLOCKED_PENDING_REVIEW if any CRITICAL/HIGH flag of the security pillar,
             or the shadow apply did not succeed (including when it could not run);
             else AUTO_APPROVED. Reliability, cost and performance flags are advisory:
-            they lower their pillar score but never block.
+            they lower their pillar score but never block, with one exception: the
+            budget gate GO-BUDGET-001 (cost, HIGH) blocks when the monthly cost
+            increase exceeds GHOSTOPS_MONTHLY_BUDGET_USD (default 500; "off"
+            disables it). An unknown cost never triggers it.
 pillars     {security|reliability|cost|performance: {score, findings[{rule, severity,
             resource, penalty}]}}: score = max(0, 100 - sum of penalties), penalty
             CRITICAL 40, HIGH 25, MEDIUM 10, LOW 5 per flag of that pillar.
@@ -59,6 +62,8 @@ BLOCKED = "BLOCKED_PENDING_REVIEW"
 BLOCKING = {"CRITICAL", "HIGH"}
 PILLARS = ("security", "reliability", "cost", "performance")
 PENALTY = {"CRITICAL": 40, "HIGH": 25, "MEDIUM": 10, "LOW": 5}
+DEFAULT_BUDGET_USD = 500.0
+GATING_RULES = {"GO-BUDGET-001"}  # non-security findings that still block
 SEVERITY_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
 SENSITIVE = "(sensitive)"
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
@@ -86,6 +91,7 @@ RULE_TITLES = {
     "GO-PERF-001": "Lambda function at the minimum memory",
     "GO-PERF-002": "Lambda timeout at the 15-minute maximum",
     "GO-PERF-003": "DynamoDB provisioned capacity without auto scaling",
+    "GO-BUDGET-001": "Monthly cost increase is over budget",
 }
 
 
@@ -165,8 +171,33 @@ def flag(rule: str, severity: str, resource: str, message: str, pillar: str = "s
 
 
 def blocks(f: dict[str, Any]) -> bool:
-    """Only security findings can block; the other pillars are advisory."""
+    """Security CRITICAL/HIGH findings block, plus the budget gate; everything else is advisory."""
+    if f["rule"] in GATING_RULES:
+        return True
     return f.get("pillar", "security") == "security" and f["severity"] in BLOCKING
+
+
+def monthly_budget() -> float | None:
+    """GHOSTOPS_MONTHLY_BUDGET_USD: max monthly cost increase before review; None = gate off."""
+    raw = (setting("GHOSTOPS_MONTHLY_BUDGET_USD") or "").strip().lower()
+    if raw in ("off", "none", "disabled"):
+        return None
+    try:
+        value = float(raw) if raw else DEFAULT_BUDGET_USD
+    except ValueError:
+        return DEFAULT_BUDGET_USD  # a typo must not switch the gate off
+    return value if value >= 0 else DEFAULT_BUDGET_USD
+
+
+def budget_flags(cost: dict[str, Any], budget: float | None = None) -> list[dict[str, str]]:
+    """GO-BUDGET-001 when the monthly cost increase exceeds the budget. Unknown cost: no flag."""
+    limit = monthly_budget() if budget is None else budget
+    delta = cost.get("monthly_usd")
+    if limit is None or delta is None or delta <= limit:
+        return []
+    return [flag("GO-BUDGET-001", "HIGH", "(monthly cost)",
+                 f"This change adds ${delta:,.2f} per month, over the ${limit:,.2f} monthly budget "
+                 "(GHOSTOPS_MONTHLY_BUDGET_USD), so a human must approve the spend.", "cost")]
 
 
 def pillars_section(flags: list[dict[str, Any]]) -> dict[str, Any]:
@@ -350,7 +381,7 @@ def groq_explain(facts: dict[str, Any], *, timeout: float = 30) -> str | None:
                 "You summarize infrastructure change risk reviews for non-experts. Write exactly 2 or 3 plain "
                 "English sentences. Use only the facts provided: state the verdict, the most severe findings and "
                 "what they mean, and whether the emulator test apply succeeded. Only findings with blocks_change true "
-                "can block; the others are advisory (reliability, cost, performance or low severity). Do not invent resources, names, "
+                "can block (high/critical security findings and the monthly budget); the others are advisory. Do not invent resources, names, "
                 "numbers or remediation steps. No markdown, no lists.")},
             {"role": "user", "content": json.dumps(facts, sort_keys=True)},
         ],
@@ -374,7 +405,7 @@ def template_explain(flags: list[dict[str, str]], shadow: dict[str, Any], cost: 
     if verdict == BLOCKED:
         counts = {s: sum(f["severity"] == s for f in blocking) for s in ("CRITICAL", "HIGH")}
         first = (f"GhostOps blocked this change for human review: it has {counts['CRITICAL']} critical and "
-                 f"{counts['HIGH']} high-severity security findings ({named})." if blocking else
+                 f"{counts['HIGH']} high-severity blocking findings ({named})." if blocking else
                  "GhostOps blocked this change for human review because it could not be verified.")
     else:
         warns = [f for f in flags if not blocks(f)]
@@ -412,11 +443,11 @@ def build_certificate(
     secret_bytes = _secret(secret)  # fail before doing slow work if we cannot sign
     blast = analyze_blast_radius(plan)
     shadow, shadow_flags = shadow_section(tf_dir, shadow_result)
-    flags = policy_flags(plan) + graph_flags(blast) + shadow_flags
+    cost, cost_breakdown = cost_section(plan, cost_result, generated=generated)
+    flags = policy_flags(plan) + graph_flags(blast) + shadow_flags + budget_flags(cost)
     flags.sort(key=lambda f: (SEVERITY_ORDER.get(f["severity"], 9), f["rule"], f["resource"], f["message"]))
     for f, remediation in zip(flags, remediate(flags, generated, use_groq=use_groq)):
         f["remediation"] = remediation
-    cost, cost_breakdown = cost_section(plan, cost_result, generated=generated)
     verdict = decide(flags, shadow)
 
     explanation = groq_explain(explainer_facts(flags, shadow, verdict, len(changes))) if use_groq else None

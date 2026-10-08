@@ -81,7 +81,8 @@ def check_architecture(
     Remediation text is the template (no Groq call per keystroke).
     """
     from app.blast_radius import analyze as analyze_blast_radius
-    from app.certificate import SEVERITY_ORDER, blocks, cost_section, graph_flags, pillars_section, policy_flags
+    from app.certificate import (SEVERITY_ORDER, blocks, budget_flags, cost_section, graph_flags, pillars_section,
+                                 policy_flags)
     from app.plan_parser import parse_plan
     from app.remediation import remediate
 
@@ -92,11 +93,11 @@ def check_architecture(
         plan = planner(tmp)
     changes = parse_plan(plan)
     blast = analyze_blast_radius(plan)
-    flags = policy_flags(plan) + graph_flags(blast)
+    cost, breakdown = cost_section(plan, cost_result, generated=generated)
+    flags = policy_flags(plan) + graph_flags(blast) + budget_flags(cost)
     flags.sort(key=lambda f: (SEVERITY_ORDER.get(f["severity"], 9), f["rule"], f["resource"], f["message"]))
     for f, remediation in zip(flags, remediate(flags, generated, use_groq=False)):
         f["remediation"] = remediation
-    cost, breakdown = cost_section(plan, cost_result, generated=generated)
     return {
         "verdict_preview": "BLOCKED_PENDING_REVIEW" if any(blocks(f) for f in flags) else "AUTO_APPROVED",
         "static_only": True,

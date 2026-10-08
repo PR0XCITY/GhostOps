@@ -98,11 +98,17 @@ Every rule belongs to one pillar. Each finding comes with a fix (a catalog field
 | GO-PERF-001 | performance | LOW | Lambda at the 128 MB minimum (CPU scales with memory) |
 | GO-PERF-002 | performance | MEDIUM | Lambda timeout at the 900 s maximum, so effectively no limit |
 | GO-PERF-003 | performance | MEDIUM | DynamoDB `PROVISIONED` capacity with no `aws_appautoscaling_target` |
+| GO-BUDGET-001 | cost | HIGH (blocks) | the monthly cost increase is above `GHOSTOPS_MONTHLY_BUDGET_USD` (default 500; `off` disables it). Checked in Python after Infracost, not in OPA; an unknown cost never triggers it |
 
-**Verdict:** a CRITICAL or HIGH finding of the **security** pillar, or a shadow apply that did
-not succeed, means `BLOCKED_PENDING_REVIEW`. Otherwise `AUTO_APPROVED`. Reliability, cost and
+**Verdict:** a CRITICAL or HIGH finding of the **security** pillar, a monthly cost increase over
+the budget (GO-BUDGET-001), or a shadow apply that did not succeed, means
+`BLOCKED_PENDING_REVIEW`. Otherwise `AUTO_APPROVED`. All other reliability, cost and
 performance findings are advisory: they lower their pillar's score and appear with their fix,
 but never block (so a HIGH reliability finding such as GO-REL-002 does not block).
+
+Why a budget gate: safe defaults mean that adding many services is not a security risk, so
+without it a change adding 50 large instances ($7,128 a month in a real check) was
+auto-approved. A spend that size should be a human decision, even when every setting is safe.
 
 ### Pillar scores
 

@@ -178,6 +178,8 @@ GENERIC = {
                      "a MiniStack limitation, a reviewer can approve after checking the plan by hand.",
     "GO-ENGINE-001": "Install or repair the OPA policy engine (opa on PATH or GHOSTOPS_OPA_BIN) and analyse again.",
     "GO-DEL-001": "Confirm the deletion is intended and that any data is backed up.",
+    "GO-BUDGET-001": "Shrink the change (fewer or smaller instances, see the cost breakdown) or, if the spend is "
+                     "planned, have a reviewer approve it or raise GHOSTOPS_MONTHLY_BUDGET_USD.",
 }
 
 

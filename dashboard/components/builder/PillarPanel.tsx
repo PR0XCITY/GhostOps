@@ -26,7 +26,9 @@ export function PillarPanel({ pillars, stale }: { pillars: Pillars; stale: boole
       <ul className="grid grid-cols-2 gap-2">
         {PILLARS.map((p) => {
           const { score, findings } = pillars[p];
-          const blocking = p === "security" && findings.some((f) => f.severity === "CRITICAL" || f.severity === "HIGH");
+          const blocking = p === "security"
+            ? findings.some((f) => f.severity === "CRITICAL" || f.severity === "HIGH")
+            : findings.some((f) => f.rule === "GO-BUDGET-001"); // the budget gate is the one cost finding that blocks
           const t = tone(score, blocking);
           const Glyph = META[p].icon;
           const rules = [...new Set(findings.map((f) => f.rule))];
@@ -36,8 +38,8 @@ export function PillarPanel({ pillars, stale }: { pillars: Pillars; stale: boole
               <div className="flex items-center gap-1.5 text-xs text-zinc-300">
                 <Glyph size={14} className="shrink-0 text-zinc-500" aria-hidden="true" />
                 {META[p].label}
-                <span className={`ml-auto text-[10px] ${p === "security" ? "text-zinc-400" : "text-zinc-500"}`}>
-                  {p === "security" ? "can block" : "advisory"}
+                <span className={`ml-auto text-[10px] ${p === "reliability" || p === "performance" ? "text-zinc-500" : "text-zinc-400"}`}>
+                  {p === "security" ? "can block" : p === "cost" ? "budget can block" : "advisory"}
                 </span>
               </div>
               <p className={`font-mono text-xl font-semibold tabular-nums ${t.text}`}>
@@ -56,7 +58,8 @@ export function PillarPanel({ pillars, stale }: { pillars: Pillars; stale: boole
       </ul>
       <p className="text-[11px] leading-relaxed text-zinc-500">
         Score = 100 minus 40 per critical, 25 per high, 10 per medium and 5 per low finding of that pillar.
-        Only high or critical security findings block; the other pillars are advice.
+        High or critical security findings block, and so does a monthly cost increase over the budget
+        (GO-BUDGET-001); everything else is advice.
       </p>
     </div>
   );

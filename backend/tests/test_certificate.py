@@ -402,3 +402,43 @@ def test_live_groq_explanation():
     assert cert["generated_by"] == "groq", "Groq call failed (template fallback used)"
     assert 20 <= len(cert["risk_explanation"]) <= 800
     assert verify(cert, secret=SECRET)
+
+
+# --- budget gate (GO-BUDGET-001) ------------------------------------------------------------
+
+
+def test_over_budget_blocks_an_otherwise_clean_change():
+    cert = make("good_plan.json", shadow=shadow_ok(2), cost=cost_result(7128.0))
+    [budget] = [f for f in cert["blast_radius"]["risk_flags"] if f["rule"] == "GO-BUDGET-001"]
+    assert budget["severity"] == "HIGH" and budget["pillar"] == "cost"
+    assert "$7,128.00 per month, over the $500.00 monthly budget" in budget["message"]
+    assert budget["remediation"]["config_change"] == []
+    assert cert["verdict"] == BLOCKED
+    assert cert["pillars"]["cost"]["score"] == 75
+    assert cert["risk_explanation"].startswith("GhostOps blocked this change for human review: it has 0 critical "
+                                               "and 1 high-severity blocking findings (Monthly cost increase is over budget)")
+
+
+def test_under_budget_and_unknown_cost_do_not_block():
+    under = make("good_plan.json", shadow=shadow_ok(2), cost=cost_result(499.99))
+    assert under["verdict"] == AUTO_APPROVED
+    assert "GO-BUDGET-001" not in {f["rule"] for f in under["blast_radius"]["risk_flags"]}
+    unknown = {"monthly_delta_usd": None, "complete": False, "unpriced": ["aws_s3_bucket.logs"], "resources": []}
+    assert make("good_plan.json", shadow=shadow_ok(2), cost=unknown)["verdict"] == AUTO_APPROVED
+
+
+def test_budget_setting(monkeypatch):
+    def with_budget(value):
+        monkeypatch.setattr(certificate, "setting", lambda name, default=None:
+                            {"GHOSTOPS_MONTHLY_BUDGET_USD": value}.get(name, default))
+        return certificate.monthly_budget()
+
+    assert with_budget(None) == 500.0
+    assert with_budget("1000") == 1000.0
+    assert with_budget("off") is None
+    assert with_budget("lots") == 500.0  # a typo must not switch the gate off
+    assert certificate.budget_flags({"monthly_usd": 600.0})[0]["rule"] == "GO-BUDGET-001"  # "lots" -> 500
+    with_budget("off")
+    assert certificate.budget_flags({"monthly_usd": 600000.0}) == []  # gate off
+    assert certificate.budget_flags({"monthly_usd": 20.0}, budget=10.0)[0]["rule"] == "GO-BUDGET-001"
+    assert certificate.blocks(certificate.budget_flags({"monthly_usd": 20.0}, budget=10.0)[0])

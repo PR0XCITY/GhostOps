@@ -401,3 +401,18 @@ def test_pillar_rules_fire_on_generated_terraform_and_apply_fix_clears_them():
     assert clean["risk_flags"] == []
     assert {p: v["score"] for p, v in clean["pillars"].items()} == {
         "security": 100, "reliability": 100, "cost": 100, "performance": 100}
+
+
+def test_check_blocks_a_safe_design_that_is_over_budget():
+    from app.architecture import check_architecture
+
+    many = {"services": [{"type": "ec2", "config": {"name": f"web-{i}", "count": 10, "instance_type": "m5.xlarge"}}
+                         for i in range(1, 6)]}
+    expensive = {"monthly_delta_usd": 7128.0, "complete": True, "unpriced": [], "resources": []}
+    out = check_architecture(many, planner=plan_stub, cost_result=expensive)
+    assert out["verdict_preview"] == BLOCKED
+    assert [f["rule"] for f in out["risk_flags"] if f["severity"] == "HIGH"] == ["GO-BUDGET-001"]
+    assert not [f for f in out["risk_flags"] if f["pillar"] == "security" and f["severity"] in ("CRITICAL", "HIGH")]
+    assert out["pillars"]["cost"]["score"] == 75
+    cheap = check_architecture(many, planner=plan_stub, cost_result=NO_COST)
+    assert cheap["verdict_preview"] == AUTO_APPROVED
