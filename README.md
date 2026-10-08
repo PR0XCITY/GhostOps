@@ -8,7 +8,11 @@ auto-approved; anything risky is blocked until a human approves or denies it.
 College Cloud Architecture Design project. Everything here runs locally and is free:
 no real AWS credentials, no paid services.
 
-![Certificates](docs/screenshots/home.png)
+You can feed it a plan from any Terraform project, or design one in the **Architecture
+Builder**: pick AWS services, set their options, and watch the generated Terraform, risk
+flags, suggested fixes and monthly cost update as you edit.
+
+![Architecture Builder with a risky design](docs/screenshots/builder-risky.png)
 
 ## The problem
 
@@ -60,6 +64,9 @@ flowchart LR
 | Shadow run (`app/shadow.py`) | Copies the Terraform directory, forces the AWS provider onto MiniStack with fake keys (override file + scrubbed environment), applies on a freshly reset MiniStack, records the resulting resources, resets again. |
 | Cost delta (`app/cost.py`) | Prices the before and after states with Infracost and reports the monthly change per resource. Anything it cannot price is `null` with a reason, never a guess. |
 | Certificate (`app/certificate.py`) | Combines everything, decides the verdict, gets an explanation from Groq (sanitized input, template fallback) and signs it with HMAC-SHA256. |
+| Remediation (`app/remediation.py`) | Every flag gets a fix. The config change is chosen by deterministic rules, never by the LLM; Groq only words the sentence, from sanitized input, with a template fallback. |
+| Catalog + generator (`app/catalog.py`, `app/generator.py`) | Nine AWS services (EC2, S3, RDS, VPC, IAM, Lambda, DynamoDB, CloudWatch alarm, ALB) with typed, validated options and optional usage inputs, turned into Terraform that targets MiniStack. |
+| Architectures (`app/architecture.py`) | Runs the generated Terraform through the same pipeline: `terraform plan` locally, then the checks above. |
 | API, CLI, dashboard | `python -m app.server`, `ghostops analyze <plan.json>`, and the Next.js dashboard in `dashboard/`. |
 
 ### Rules that exist today
@@ -100,14 +107,70 @@ Other principles that follow from it:
   `GET /verify/{plan_id}`. Reviewer decisions go to an append-only audit log and are never
   applied to any system.
 
-## Screenshots
+## How it is used
+
+### 1. Design in the Architecture Builder (`/builder`)
+
+Add services from the catalog (or load the Risky / Safe example) and edit their options.
+Feedback comes in three steps, so it is quick but nothing heavy runs on every key press:
+
+| When | What runs | Endpoint | Time |
+|---|---|---|---|
+| 350 ms after an edit | Field validation, generated Terraform, diagram | `POST /architectures/preview` | instant |
+| 2 s after you stop editing | Static check: `terraform plan`, OPA, graph diff, Infracost | `POST /architectures/check` | about 30 s |
+| You press **Analyze** | Full pipeline including the MiniStack shadow apply; stores a signed certificate | `POST /architectures/analyze` | 1 to 2 min |
+
+The static result reads **WOULD BE BLOCKED** or **WOULD BE AUTO-APPROVED** and is never
+signed. If you edit after a result, it is marked out of date until the next check.
+
+Each risk flag comes with a suggested fix and the exact field change. **Apply Fix** writes that
+change into the service card and the next check confirms it. Below, the risky design before
+and after applying the fixes (one MEDIUM finding left, so it would be auto-approved):
+
+| Risky design: 8 flags, each with a fix | After Apply Fix |
+|---|---|
+| ![Risky](docs/screenshots/builder-risky.png) | ![Fixed](docs/screenshots/builder-fixed.png) |
+
+**Cost** is shown per service. Fixed-price services (EC2, RDS, ALB, alarms) are priced from the
+plan. Usage-based ones (S3, Lambda, DynamoDB) take optional monthly usage inputs (storage GB,
+requests, invocations) that are passed to Infracost; left blank, they are priced at zero usage
+and marked as a lower bound. The certificate records the usage assumptions it used.
+
+### 2. Read the certificate (`/certificates/{plan_id}`)
+
+Every analysed plan, from the Builder, the CLI or the API, lands on the Certificates page. Each
+row shows the verdict, top severity, cost delta and review state: blocked certificates read
+*awaiting review* or *approved / denied by (reviewer)*; auto-approved ones read
+*auto-approved by policy*.
+
+![Certificates](docs/screenshots/home.png)
 
 | Blocked change | Auto-approved change |
 |---|---|
 | ![Blocked certificate](docs/screenshots/blocked-detail.png) | ![Auto-approved certificate](docs/screenshots/approved-detail.png) |
 
-The blocked certificate shows the alarm-red blast radius, the resource graph with flagged
-nodes, every risk flag, the signature check and the Approve / Deny controls.
+A certificate shows the blast radius, the resource graph with flagged nodes, every risk flag
+with its fix, the cost breakdown, the resources boto3 actually found in MiniStack after the
+shadow apply, and the signature check. Blocked certificates also get Approve / Deny controls.
+
+### 3. Review (blocked certificates only)
+
+A reviewer approves or denies with a name and an optional comment. Decisions go to an
+append-only audit log tied to the certificate's signature and are **never applied** to any
+system. Auto-approved certificates refuse decisions (HTTP 409): policy already approved them,
+so there is nothing to review.
+
+### 4. Export a report
+
+**Export Report** on any certificate opens a print-friendly A4 page: verdict, signature
+status, explanation, summary, risk flags with fixes, cost breakdown, shadow inventory,
+architecture, resource changes, review state, and the generated Terraform as an appendix.
+**Print / Save as PDF** uses the browser's print dialog. Sample:
+[docs/sample-report.pdf](docs/sample-report.pdf).
+
+| Report page | Printed (PDF) |
+|---|---|
+| ![Report](docs/screenshots/report.png) | ![Print preview](docs/screenshots/report-print-preview.png) |
 
 ## Running it on Windows
 
@@ -175,7 +238,22 @@ terraform show -json tf.plan | Out-File -Encoding utf8 plan.json
 ```
 
 Exit code 0 = auto-approved, 1 = blocked, 2 = error. The same works through the API
-(`POST /analyze` with `plan_path` or an uploaded file) and the dashboard.
+(`POST /analyze` with `plan_path` or an uploaded file).
+
+### API reference
+
+| Method and path | Purpose |
+|---|---|
+| `GET /health` | Status of the API and its tools |
+| `GET /catalog` | Services, fields, defaults, usage inputs, pricing notes |
+| `POST /architectures/preview` | Validate an architecture and return the generated Terraform |
+| `POST /architectures/check` | Static check (no MiniStack, not signed, not stored) |
+| `POST /architectures/analyze` | Full pipeline; stores and returns a signed certificate |
+| `POST /analyze` | Analyse a `terraform show -json` plan |
+| `GET /demos`, `POST /analyze/demo/{name}` | Run the bundled demos |
+| `GET /certificates`, `GET /certificates/{id}` | List or fetch certificates |
+| `GET /certificates/{id}/decisions`, `POST /certificates/{id}/decision` | Audit log; approve or deny a blocked certificate |
+| `GET /verify/{id}` | Recompute and check the HMAC signature |
 
 ### Run all tests (one command)
 
@@ -214,8 +292,12 @@ ALL CHECKS PASSED
   cannot be checked statically. IAM policies of that kind are blocked; other unknowns pass.
 - **Blast radius is approximate.** An instance behind an open security group counts as public
   even without a public IP; `count` references link every instance of a resource.
-- **Cost is an estimate.** Usage-based items (S3 storage, requests) are priced at zero usage and
-  flagged as a lower bound. Each scan sends planned resource attributes to Infracost's service.
+- **Cost is an estimate.** Usage-based items are priced from the usage you enter, or at zero
+  usage (flagged as a lower bound) when it is left blank. Each scan sends planned resource
+  attributes to Infracost's service.
+- **The Builder covers nine services with fixed shapes.** It generates one sensible layout per
+  service (for example, EC2 always gets a security group and an attached EBS volume). Anything
+  else needs your own Terraform and the plan-based flow.
 - **The explanation comes from an LLM.** Groq's wording varies between runs (the facts it may
   use are fixed and sanitized); if Groq fails, a template is used.
 - **Local tool, not a hosted service.** The API binds to 127.0.0.1 with no authentication and
@@ -237,12 +319,13 @@ ALL CHECKS PASSED
 
 ```text
 backend/            FastAPI service, analysis pipeline, Rego rules, tests
-  app/              plan_parser, policy_engine, blast_radius, shadow, cost, certificate, api, cli
+  app/              plan_parser, policy_engine, blast_radius, shadow, cost, certificate,
+                    remediation, catalog, generator, architecture, api, store, cli
   rules/ghostops/   Rego v1 policies (see rules/README.md)
   tests/            pytest suite, Rego unit tests, plan JSON fixtures
-dashboard/          Next.js 16 + TypeScript + Tailwind v4 dashboard
+dashboard/          Next.js 16 + TypeScript + Tailwind v4 dashboard (Certificates, Builder, report)
 demo/               bad and good Terraform demos, fixture generator, sample certificates
-docs/screenshots/   dashboard screenshots
+docs/               screenshots/ and sample-report.pdf
 scripts/            demo.py (one-command demo), test_all.py (one-command test suite)
 docker-compose.yml  MiniStack
 ```

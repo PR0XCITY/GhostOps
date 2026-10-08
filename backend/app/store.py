@@ -79,10 +79,14 @@ class Store:
     def list_certificates(self) -> list[dict[str, Any]]:
         with self._connect() as db:
             rows = db.execute("SELECT body FROM certificates ORDER BY timestamp DESC, plan_id").fetchall()
+            # Latest decision on the CURRENT version of each certificate (same signature);
+            # decisions on an earlier analysis of the plan stay in the log but are not "the" decision.
             latest = {
                 r["plan_id"]: dict(r) for r in db.execute(
-                    "SELECT plan_id, decision, reviewer, decided_at FROM audit_log a WHERE id = "
-                    "(SELECT MAX(id) FROM audit_log b WHERE b.plan_id = a.plan_id)")
+                    "SELECT a.plan_id, a.decision, a.reviewer, a.decided_at FROM audit_log a "
+                    "JOIN certificates c ON c.plan_id = a.plan_id AND c.signature = a.certificate_signature "
+                    "WHERE a.id = (SELECT MAX(b.id) FROM audit_log b WHERE b.plan_id = a.plan_id "
+                    "AND b.certificate_signature = c.signature)")
             }
         out = []
         for row in rows:

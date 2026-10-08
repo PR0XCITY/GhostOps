@@ -227,14 +227,36 @@ def test_decision_validation(client, body):
 
 
 def test_audit_log_is_append_only(client, store):
-    cert = analyze(client, "good_plan.json").json()
-    client.post(f"/certificates/{cert['plan_id']}/decision", json={"decision": "approve", "reviewer": "ana"})
+    cert = analyze(client, "bad_plan.json", "demo/bad").json()
+    r = client.post(f"/certificates/{cert['plan_id']}/decision", json={"decision": "approve", "reviewer": "ana"})
+    assert r.status_code == 200
     db = sqlite3.connect(store.path)
     with pytest.raises(sqlite3.DatabaseError, match="append-only"):
         db.execute("UPDATE audit_log SET decision = 'deny'")
     with pytest.raises(sqlite3.DatabaseError, match="append-only"):
         db.execute("DELETE FROM audit_log")
     db.close()
+
+
+def test_auto_approved_certificates_take_no_decisions(client, store):
+    cert = analyze(client, "good_plan.json").json()
+    assert cert["verdict"] == "AUTO_APPROVED"
+    r = client.post(f"/certificates/{cert['plan_id']}/decision", json={"decision": "approve", "reviewer": "ana"})
+    assert r.status_code == 409 and "auto-approved by policy" in r.json()["detail"]
+    assert store.decisions(cert["plan_id"]) == []
+    summary = next(c for c in client.get("/certificates").json() if c["plan_id"] == cert["plan_id"])
+    assert summary["latest_decision"] is None
+
+
+def test_decisions_on_an_earlier_version_are_not_the_current_decision(client, store):
+    first = analyze(client, "bad_plan.json", "demo/bad").json()
+    client.post(f"/certificates/{first['plan_id']}/decision", json={"decision": "deny", "reviewer": "ana"})
+    __import__("time").sleep(1.1)  # timestamps have 1 s resolution; a real re-analysis takes far longer
+    second = analyze(client, "bad_plan.json", "demo/bad").json()  # re-analysis: new timestamp + signature
+    assert second["plan_id"] == first["plan_id"] and second["signature"] != first["signature"]
+    summary = next(c for c in client.get("/certificates").json() if c["plan_id"] == second["plan_id"])
+    assert summary["latest_decision"] is None  # still awaiting review for this version
+    assert len(store.decisions(second["plan_id"])) == 1  # the old decision stays in the log
 
 
 # --- /verify ----------------------------------------------------------------------------------

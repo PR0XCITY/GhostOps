@@ -37,10 +37,15 @@ function Row({ c }: { c: CertificateSummary }) {
         </Link>
         <div className="mt-0.5 text-xs text-zinc-500">
           {c.resource_change_count} change{c.resource_change_count === 1 ? "" : "s"}
-          {c.latest_decision && (
+          {!blocked ? (
+            // Auto-approved certificates are approved by policy; no human review is involved.
+            <span className="text-emerald-400/90"> · auto-approved by policy</span>
+          ) : c.latest_decision ? (
             <span className={c.latest_decision.decision === "approve" ? "text-emerald-400/90" : "text-red-400/90"}>
               {" "}· {c.latest_decision.decision === "approve" ? "approved" : "denied"} by {c.latest_decision.reviewer}
             </span>
+          ) : (
+            <span className="text-amber-300/90"> · awaiting review</span>
           )}
         </div>
       </td>

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useRef, useState } from "react";
-import { ArrowLeft, CheckCircle, Prohibit, Siren, ShieldCheck } from "@phosphor-icons/react";
+import { ArrowLeft, CheckCircle, FileText, Prohibit, Siren, ShieldCheck } from "@phosphor-icons/react";
 import { ResourceGraph } from "@/components/ResourceGraph";
 import { SEVERITY_STYLE, SignatureBadge, VerdictBadge } from "@/components/badges";
 import { ErrorState, SkeletonBlock } from "@/components/states";
@@ -293,8 +293,13 @@ function DecisionPanel({ detail, demo, onDecided }: { detail: CertificateDetail;
       <div className={blocked ? "border-t border-line" : ""}>
         <h3 className="px-4 pt-3 text-xs font-normal text-zinc-500">Audit Log</h3>
         <div aria-live="polite">
+          {!blocked && (
+            <p className="px-4 pb-3 pt-1 text-sm text-emerald-300/90">
+              Auto-approved by GhostOps policy. No human review is needed or possible.
+            </p>
+          )}
           {decisions.length === 0 ? (
-            <p className="px-4 pb-4 pt-1 text-sm text-zinc-500">{blocked ? "No decision yet." : "Auto-approved: no review needed."}</p>
+            blocked && <p className="px-4 pb-4 pt-1 text-sm text-zinc-500">No decision yet.</p>
           ) : (
             <ul className="divide-y divide-line pb-1">
               {decisions.map((d) => {
@@ -399,6 +404,10 @@ export default function CertificatePage() {
         <div className="ml-auto flex items-center gap-2">
           <VerdictBadge verdict={cert.verdict} />
           <SignatureBadge state={signature} />
+          <Link href={`/certificates/${cert.plan_id}/report`}
+                className="flex items-center gap-1.5 rounded-md border border-line-strong px-2.5 py-1 text-xs text-zinc-200 transition-colors duration-150 hover:bg-raised">
+            <FileText size={14} aria-hidden="true" /> Export Report
+          </Link>
         </div>
       </div>
 

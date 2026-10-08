@@ -252,6 +252,8 @@ def create_app(store: Store | None = None, analyzer: Analyzer = build_certificat
     @app.post("/certificates/{plan_id}/decision")
     def decide(body: DecisionRequest, plan_id: str = PLAN_ID) -> dict[str, Any]:
         cert = get_cert(plan_id)
+        if cert["verdict"] != "BLOCKED_PENDING_REVIEW":
+            raise HTTPException(409, "this certificate was auto-approved by policy; there is nothing to review")
         if not verify(cert):
             raise HTTPException(409, "stored certificate failed signature verification; refusing to record a decision")
         entry = app.state.store.add_decision(cert, body.decision, body.reviewer.strip(), body.comment)

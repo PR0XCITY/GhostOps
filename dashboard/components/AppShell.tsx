@@ -45,11 +45,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-[100dvh] flex-col">
       <a
         href="#main"
-        className="sr-only z-30 rounded-md bg-cyan-400 px-3 py-2 text-sm font-medium text-zinc-950 focus:not-sr-only focus:fixed focus:left-4 focus:top-3"
+        className="sr-only z-30 rounded-md print:hidden bg-cyan-400 px-3 py-2 text-sm font-medium text-zinc-950 focus:not-sr-only focus:fixed focus:left-4 focus:top-3"
       >
         Skip to Content
       </a>
-      <header className="sticky top-0 z-20 border-b border-line bg-canvas/90 backdrop-blur">
+      <header className="sticky top-0 z-20 border-b print:hidden border-line bg-canvas/90 backdrop-blur">
         <div className="mx-auto flex h-14 max-w-[1400px] items-center gap-8 px-4 md:px-6">
           <Link href="/" className="flex items-center gap-2 text-zinc-100" aria-label="GhostOps home">
             <ShieldCheckered size={20} weight="duotone" className="text-cyan-400" aria-hidden="true" />
@@ -78,7 +78,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </header>
       {mode === "demo" && (
-        <div className="border-b border-amber-400/20 bg-amber-400/[0.06]">
+        <div className="border-b border-amber-400/20 bg-amber-400/[0.06] print:hidden">
           <p className="mx-auto max-w-[1400px] px-4 py-2 text-xs text-amber-200/90 md:px-6">
             Demo mode: the GhostOps API at <span className="font-mono" translate="no">{API_BASE}</span> is unreachable,
             so these are bundled sample certificates. Start it with{" "}
@@ -86,7 +86,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </p>
         </div>
       )}
-      <main id="main" tabIndex={-1} className="mx-auto w-full max-w-[1400px] flex-1 px-4 py-8 outline-none md:px-6">
+      <main id="main" tabIndex={-1} className="mx-auto w-full max-w-[1400px] flex-1 px-4 py-8 outline-none md:px-6 print:max-w-none print:p-0">
         {children}
       </main>
     </div>

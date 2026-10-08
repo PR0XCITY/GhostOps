@@ -39,6 +39,13 @@ body {
   background: rgb(34 211 238 / 0.3);
 }
 
+/* Printing (certificate reports): white paper, no app chrome (see print:hidden). */
+@media print {
+  :root { color-scheme: light; }
+  body { background: #fff; color: #18181b; }
+  @page { size: A4; margin: 14mm; }
+}
+
 /* Skeleton shimmer for loading states; disabled for reduced motion. */
 @keyframes shimmer {
   from { background-position: -400px 0; }
