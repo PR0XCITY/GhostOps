@@ -1,42 +1,66 @@
 // Talks to the GhostOps FastAPI backend. If the API is unreachable, the
 // dashboard switches to demo mode and reads /public/sample-certificates.
 
-import type { Certificate, CertificateSummary, Decision, Severity, VerifyResult } from "./types";
+import type {
+  ArchitectureError, ArchitectureService, CatalogService, Certificate, CertificateSummary, CheckResult, Decision,
+  PreviewResult, Severity, VerifyResult,
+} from "./types";
 import { SEVERITIES } from "./types";
 
 export const API_BASE = (process.env.NEXT_PUBLIC_GHOSTOPS_API ?? "http://127.0.0.1:8000").replace(/\/$/, "");
 const SAMPLE_BASE = "/sample-certificates";
 
 export class ApiError extends Error {
-  constructor(message: string, readonly status?: number) {
+  constructor(message: string, readonly status?: number, readonly errors?: ArchitectureError[]) {
     super(message);
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}, timeoutMs = 15000): Promise<T> {
+export function isAbort(err: unknown): boolean {
+  return err instanceof DOMException && err.name === "AbortError";
+}
+
+async function request<T>(path: string, init: RequestInit = {}, timeoutMs = 15000, outer?: AbortSignal): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const onOuterAbort = () => controller.abort(outer?.reason);
+  outer?.addEventListener("abort", onOuterAbort);
   let response: Response;
   try {
     response = await fetch(`${API_BASE}${path}`, { ...init, signal: controller.signal, cache: "no-store" });
   } catch {
+    if (outer?.aborted) throw new DOMException("superseded", "AbortError"); // a newer request replaced this one
     const reason = controller.signal.aborted ? `timed out after ${Math.round(timeoutMs / 1000)}s` : "unreachable";
     throw new ApiError(`GhostOps API ${reason} (${API_BASE})`);
   } finally {
     clearTimeout(timer);
+    outer?.removeEventListener("abort", onOuterAbort);
   }
   if (!response.ok) {
     let detail = `${response.status} ${response.statusText}`;
+    let errors: ArchitectureError[] | undefined;
     try {
       const body = await response.json();
       if (typeof body?.detail === "string") detail = body.detail;
       else if (Array.isArray(body?.detail)) detail = body.detail.map((d: { msg?: string }) => d.msg).join("; ");
+      else if (body?.detail?.errors) {
+        detail = body.detail.message ?? "invalid architecture";
+        errors = body.detail.errors as ArchitectureError[];
+      }
     } catch {
       /* body was not JSON; keep the status text */
     }
-    throw new ApiError(detail, response.status);
+    throw new ApiError(detail, response.status, errors);
   }
   return (await response.json()) as T;
+}
+
+function postJson<T>(path: string, body: unknown, timeoutMs: number, signal?: AbortSignal): Promise<T> {
+  return request<T>(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  }, timeoutMs, signal);
 }
 
 export async function apiReachable(): Promise<boolean> {
@@ -62,6 +86,16 @@ export const api = {
   // A shadow apply on MiniStack takes 30-120 s, so allow plenty of time.
   runDemo: (name: "bad" | "good") =>
     request<Certificate>(`/analyze/demo/${name}`, { method: "POST" }, 300000),
+  catalog: () => request<CatalogService[]>("/catalog"),
+  // Fast: Terraform text, validation errors, resources per service.
+  preview: (arch: { services: ArchitectureService[] }, signal?: AbortSignal) =>
+    postJson<PreviewResult>("/architectures/preview", arch, 15000, signal),
+  // ~20-30 s: plan + OPA + graph + cost + fixes, no shadow apply, not stored.
+  check: (arch: { services: ArchitectureService[] }, signal?: AbortSignal) =>
+    postJson<CheckResult>("/architectures/check", arch, 180000, signal),
+  // 40-150 s: full pipeline incl. MiniStack apply; stores a signed certificate.
+  analyzeArchitecture: (arch: { services: ArchitectureService[] }, signal?: AbortSignal) =>
+    postJson<Certificate>("/architectures/analyze", arch, 600000, signal),
 };
 
 // --- demo mode ------------------------------------------------------------------------------

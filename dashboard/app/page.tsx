@@ -104,13 +104,13 @@ export default function Home() {
         ) : rows.length === 0 ? (
           <EmptyState
             title="No Certificates Yet"
-            body="Run the bad or good demo to produce your first signed Risk Certificate, or analyse a plan with the ghostops CLI."
+            body="Build an architecture (or load an example) and press Analyze to produce your first signed Risk Certificate, or analyse a plan with the ghostops CLI."
             action={
               <Link
-                href="/analyze"
+                href="/builder"
                 className="mt-1 inline-flex items-center gap-2 rounded-md bg-cyan-400 px-3 py-2 text-sm font-medium text-zinc-950 transition-transform duration-150 ease-[var(--ease-snap)] hover:bg-cyan-300 active:translate-y-px"
               >
-                New Analysis <ArrowRight size={14} weight="bold" aria-hidden="true" />
+                Open Builder <ArrowRight size={14} weight="bold" aria-hidden="true" />
               </Link>
             }
           />

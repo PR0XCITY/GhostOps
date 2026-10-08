@@ -224,6 +224,44 @@ def test_all_static_only_means_unverified_and_blocked(monkeypatch):
     assert cert["architecture"]["services"][0]["analysis"] == "static_only"
 
 
+# --- static check (builder) ----------------------------------------------------------------------------------
+
+
+def test_check_endpoint_is_static_unsigned_and_not_stored(tmp_path):
+    from functools import partial
+
+    from fastapi.testclient import TestClient
+
+    from app.api import create_app
+    from app.architecture import check_architecture
+    from app.store import Store
+
+    def plan_for_risky_ec2(directory):
+        # a real-shaped plan: SG with SSH open to the world, as the generator would produce
+        return {"format_version": "1.2", "resource_changes": [{
+            "address": "aws_security_group.bastion_ssh", "mode": "managed", "type": "aws_security_group",
+            "name": "bastion_ssh", "change": {"actions": ["create"], "before": None, "after": {
+                "ingress": [{"protocol": "tcp", "from_port": 22, "to_port": 22,
+                             "cidr_blocks": ["0.0.0.0/0"], "ipv6_cidr_blocks": []}]}}}]}
+
+    store = Store(tmp_path / "db")
+    checker = partial(check_architecture, planner=plan_for_risky_ec2, cost_result=NO_COST)
+    with TestClient(create_app(store=store, architecture_checker=checker)) as client:
+        r = client.post("/architectures/check", json={"services": [
+            {"type": "ec2", "config": {"name": "bastion", "ssh_source_cidr": "0.0.0.0/0"}}]})
+        assert r.status_code == 200, r.text
+        out = r.json()
+        assert out["static_only"] is True and out["verdict_preview"] == BLOCKED
+        assert "signature" not in out and store.list_certificates() == []
+        [sg_flag] = [f for f in out["risk_flags"] if f["rule"] == "GO-SG-001"]
+        assert sg_flag["remediation"]["config_change"][0]["to"] == "10.0.0.0/16"
+        assert sg_flag["remediation"]["generated_by"] == "template"
+        assert out["services"][0]["resources"][0] == "aws_security_group.bastion_ssh"
+        assert 'resource "aws_instance" "bastion"' in out["generated_terraform"]
+        bad = client.post("/architectures/check", json={"services": [{"type": "ec2", "config": {"count": 0}}]})
+        assert bad.status_code == 422 and bad.json()["detail"]["errors"][0]["field"] == "count"
+
+
 # --- live: 3 architectures through the whole pipeline ----------------------------------------------------
 
 

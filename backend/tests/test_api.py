@@ -151,9 +151,11 @@ def test_architecture_preview_returns_terraform_only(client, analyzer, store):
     assert set(out) == {"terraform", "filename", "resources", "services"}
     assert out["filename"] == "main.tf" and 'resource "aws_instance" "web"' in out["terraform"]
     assert "aws_s3_bucket.assets" in out["resources"]
-    assert out["services"][0] == {"type": "ec2", "name": "web",
+    assert out["services"][0] == {"type": "ec2", "name": "web", "shadow_supported": True, "usage": {},
                                   "config": {"name": "web", "instance_type": "t3.micro", "count": 2,
-                                             "volume_gb": 20, "ssh_source_cidr": "10.0.0.0/16"}}
+                                             "volume_gb": 20, "ssh_source_cidr": "10.0.0.0/16"},
+                                  "resources": ["aws_security_group.web_ssh", "aws_instance.web",
+                                                "aws_ebs_volume.web", "aws_volume_attachment.web"]}
     assert analyzer.calls == [] and client.get("/certificates").json() == []  # nothing analysed or stored
 
 

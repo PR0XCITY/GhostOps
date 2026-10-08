@@ -12,11 +12,45 @@ export interface ResourceChange {
   after: Record<string, unknown> | null;
 }
 
+export interface ConfigChange {
+  // catalog architectures: a service field; plain Terraform: a resource attribute
+  service?: string;
+  type?: string;
+  field?: string;
+  from?: unknown;
+  resource?: string;
+  attribute?: string;
+  to: unknown;
+}
+
+export interface Remediation {
+  summary: string;
+  config_change: ConfigChange[];
+  generated_by: "groq" | "template";
+}
+
 export interface RiskFlag {
   rule: string;
   severity: Severity;
   resource: string;
   message: string;
+  remediation?: Remediation; // added later; absent on older certificates
+}
+
+export interface CostBreakdownRow {
+  resource: string;
+  type: string | null;
+  action: string | null;
+  monthly_usd: number | null;
+  delta_usd: number | null;
+  usage_assumptions: Record<string, number>;
+  note: string | null;
+}
+
+export interface ShadowInventoryItem {
+  type: string;
+  id: string;
+  name?: string;
 }
 
 export interface NewlyPublic {
@@ -58,12 +92,94 @@ export interface Certificate {
     risk_flags: RiskFlag[];
     graph: { nodes: GraphNode[]; edges: GraphEdge[] };
   };
-  shadow_run: { applied: boolean; resources_created: number; error: string | null };
+  shadow_run: {
+    applied: boolean;
+    resources_created: number;
+    error: string | null;
+    resources?: ShadowInventoryItem[]; // boto3 inventory of MiniStack before teardown
+    inventory_error?: string | null;
+  };
   cost_delta: { monthly_usd: number | null; note: string | null };
   verdict: Verdict;
   risk_explanation: string;
   generated_by: "groq" | "template";
+  cost_breakdown?: CostBreakdownRow[];
+  generated_terraform?: string | null;
+  architecture?: { services: (ArchitectureServiceInfo & { analysis: "shadow_and_static" | "static_only" })[] } | null;
   signature: string;
+}
+
+// --- service catalog & architecture builder ------------------------------------------------
+
+export type FieldKind = "select" | "int" | "bool" | "cidr" | "string" | "list";
+
+export interface CatalogField {
+  name: string;
+  label: string;
+  kind: FieldKind;
+  default: unknown;
+  options?: (string | number)[];
+  min?: number;
+  max?: number;
+  pattern?: string;
+  item_pattern?: string;
+  help?: string;
+  infracost_key?: string;
+}
+
+export interface CatalogService {
+  type: string;
+  label: string;
+  description: string;
+  resources: string[];
+  shadow_supported: boolean;
+  pricing: "fixed" | "usage_based" | "free" | "unsupported";
+  pricing_note: string;
+  fields: CatalogField[];
+  usage_fields?: CatalogField[];
+}
+
+export interface ArchitectureService {
+  type: string;
+  config: Record<string, unknown>;
+  usage?: Record<string, unknown>;
+}
+
+export interface ArchitectureServiceInfo {
+  type: string;
+  name: string;
+  shadow_supported: boolean;
+  config: Record<string, unknown>;
+  usage: Record<string, unknown>;
+  resources?: string[];
+}
+
+export interface ArchitectureError {
+  service: number | "-";
+  field: string;
+  message: string;
+}
+
+export interface PreviewResult {
+  terraform: string;
+  filename: string;
+  resources: string[];
+  services: ArchitectureServiceInfo[];
+}
+
+export interface CheckResult {
+  verdict_preview: Verdict;
+  static_only: true;
+  risk_flags: RiskFlag[];
+  newly_public: NewlyPublic[];
+  iam_widened: IamWidened[];
+  graph: { nodes: GraphNode[]; edges: GraphEdge[] };
+  cost_delta: { monthly_usd: number | null; note: string | null };
+  cost_breakdown: CostBreakdownRow[];
+  resource_count: number;
+  services: ArchitectureServiceInfo[];
+  generated_terraform: string;
+  duration_s: number;
 }
 
 export interface Decision {
