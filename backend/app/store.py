@@ -3,6 +3,8 @@
 certificates  latest certificate per plan_id (re-analysing a plan replaces it)
 audit_log     every approve/deny decision, append-only: triggers reject UPDATE
               and DELETE, so recorded decisions cannot be rewritten.
+designs       the Builder's compare slots A and B: architecture JSON + a snapshot
+              of its static check (saving a slot again replaces it).
 Decisions are records only; nothing here applies anything to any system.
 """
 
@@ -34,6 +36,12 @@ CREATE TABLE IF NOT EXISTS audit_log (
     certificate_signature TEXT NOT NULL,
     verdict_at_decision   TEXT NOT NULL,
     decided_at            TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS designs (
+    slot         TEXT PRIMARY KEY CHECK (slot IN ('A', 'B')),
+    architecture TEXT NOT NULL,
+    snapshot     TEXT NOT NULL,
+    saved_at     TEXT NOT NULL
 );
 CREATE TRIGGER IF NOT EXISTS audit_log_no_update BEFORE UPDATE ON audit_log
 BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END;
@@ -124,3 +132,21 @@ class Store:
         with self._connect() as db:
             rows = db.execute("SELECT * FROM audit_log WHERE plan_id = ? ORDER BY id", (plan_id,)).fetchall()
         return [dict(r) for r in rows]
+
+    def save_design(self, slot: str, architecture: dict[str, Any], snapshot: dict[str, Any]) -> dict[str, Any]:
+        saved_at = _now()
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO designs VALUES (?, ?, ?, ?)",
+                       (slot, json.dumps(architecture), json.dumps(snapshot), saved_at))
+        return {"slot": slot, "architecture": architecture, "snapshot": snapshot, "saved_at": saved_at}
+
+    def designs(self) -> dict[str, dict[str, Any] | None]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM designs").fetchall()
+        saved = {r["slot"]: {"slot": r["slot"], "architecture": json.loads(r["architecture"]),
+                             "snapshot": json.loads(r["snapshot"]), "saved_at": r["saved_at"]} for r in rows}
+        return {slot: saved.get(slot) for slot in ("A", "B")}
+
+    def delete_design(self, slot: str) -> bool:
+        with self._connect() as db:
+            return db.execute("DELETE FROM designs WHERE slot = ?", (slot,)).rowcount > 0

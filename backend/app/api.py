@@ -18,6 +18,10 @@ POST /architectures/check             same body -> static check for the builder 
                                       unsigned, not stored)
 POST /architectures/analyze           same body (+ per-service "usage") -> generate, plan, full pipeline,
                                       stored certificate (?use_groq=false for template text)
+GET  /comparisons                     compare slots A and B: both saved designs, diff, highlights
+PUT  /comparisons/{A|B}               same body as /architectures/check: runs the static check
+                                      and saves architecture + result snapshot in that slot
+DELETE /comparisons/{A|B}             empty a slot
 GET  /health
 
 CORS allows the dashboard at http://localhost:3000. Request bodies and settings
@@ -39,6 +43,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from app.architecture import analyze_architecture, check_architecture, services_with_resources
 from app.catalog import catalog
+from app.compare import comparison, snapshot
 from app.shadow import ShadowError
 from app.certificate import CertificateError, build_certificate, verify
 from app.generator import ArchitectureError, generate
@@ -113,7 +118,7 @@ def create_app(store: Store | None = None, analyzer: Analyzer = build_certificat
         yield
 
     app = FastAPI(title="GhostOps", version="0.7.0", lifespan=lifespan)
-    app.add_middleware(CORSMiddleware, allow_origins=DASHBOARD_ORIGINS, allow_methods=["GET", "POST"],
+    app.add_middleware(CORSMiddleware, allow_origins=DASHBOARD_ORIGINS, allow_methods=["GET", "POST", "PUT", "DELETE"],
                        allow_headers=["Content-Type"])
     app.state.store = store or Store(db_path())
 
@@ -219,6 +224,34 @@ def create_app(store: Store | None = None, analyzer: Analyzer = build_certificat
         app.state.store.save_certificate(cert)
         log.info("analyzed architecture plan %s verdict=%s", cert["plan_id"], cert["verdict"])
         return cert
+
+    @app.get("/comparisons")
+    def get_comparisons() -> dict[str, Any]:
+        return comparison(app.state.store.designs())
+
+    @app.put("/comparisons/{slot}")
+    async def save_comparison(request: Request, slot: Literal["A", "B"]) -> dict[str, Any]:
+        """Save the current Builder design in slot A or B (runs the static check, ~30 s)."""
+        try:
+            body = await request.json()
+        except ValueError:
+            raise HTTPException(422, "body must be JSON") from None
+        try:
+            generate(body)
+        except ArchitectureError as exc:
+            raise HTTPException(422, {"message": "invalid architecture", "errors": exc.errors}) from None
+        try:
+            check = await run_in_threadpool(architecture_checker, body)
+        except ShadowError as exc:
+            raise HTTPException(500, f"could not plan the generated Terraform: {exc}") from None
+        architecture = {"services": body["services"]}
+        return app.state.store.save_design(slot, architecture, snapshot(check))
+
+    @app.delete("/comparisons/{slot}")
+    def delete_comparison(slot: Literal["A", "B"]) -> dict[str, Any]:
+        if not app.state.store.delete_design(slot):
+            raise HTTPException(404, f"slot {slot} is empty")
+        return {"slot": slot, "deleted": True}
 
     @app.get("/demos")
     def list_demos() -> list[dict[str, str]]:

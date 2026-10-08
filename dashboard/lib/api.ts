@@ -6,6 +6,7 @@ import type {
   PreviewResult, Severity, VerifyResult,
 } from "./types";
 import { SEVERITIES } from "./types";
+import type { Comparison, SavedDesign, Slot } from "./compare";
 
 export const API_BASE = (process.env.NEXT_PUBLIC_GHOSTOPS_API ?? "http://127.0.0.1:8000").replace(/\/$/, "");
 const SAMPLE_BASE = "/sample-certificates";
@@ -96,6 +97,15 @@ export const api = {
   // 40-150 s: full pipeline incl. MiniStack apply; stores a signed certificate.
   analyzeArchitecture: (arch: { services: ArchitectureService[] }, signal?: AbortSignal) =>
     postJson<Certificate>("/architectures/analyze", arch, 600000, signal),
+  // Compare slots, kept in SQLite. Saving runs the static check (~20-30 s).
+  comparisons: () => request<Comparison>("/comparisons"),
+  saveDesign: (slot: Slot, arch: { services: ArchitectureService[] }) =>
+    request<SavedDesign>(`/comparisons/${slot}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(arch),
+    }, 180000),
+  deleteDesign: (slot: Slot) => request<{ slot: Slot; deleted: true }>(`/comparisons/${slot}`, { method: "DELETE" }),
 };
 
 // --- demo mode ------------------------------------------------------------------------------

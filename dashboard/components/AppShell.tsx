@@ -9,6 +9,7 @@ import { API_BASE } from "@/lib/api";
 const NAV = [
   { href: "/", label: "Certificates" },
   { href: "/builder", label: "Builder" },
+  { href: "/compare", label: "Compare" },
 ];
 
 function ModeIndicator() {

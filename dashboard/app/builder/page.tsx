@@ -6,6 +6,7 @@ import { Plus } from "@phosphor-icons/react";
 import { useMode } from "@/components/ModeProvider";
 import { ArchitectureDiagram } from "@/components/builder/ArchitectureDiagram";
 import { ResultsPanel, type Async } from "@/components/builder/ResultsPanel";
+import { SaveSlots } from "@/components/builder/SaveSlots";
 import { ServiceCard } from "@/components/builder/ServiceCard";
 import { EmptyState, ErrorState, SkeletonBlock } from "@/components/states";
 import { ApiError, api, isAbort } from "@/lib/api";
@@ -113,6 +114,28 @@ export default function BuilderPage() {
     setServices(next);
   };
 
+  // /builder?load=A|B opens a design saved for comparison
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const loadedSlot = useRef(false);
+  useEffect(() => {
+    if (catalog.status !== "ready" || loadedSlot.current) return;
+    const slot = new URLSearchParams(window.location.search).get("load");
+    if (slot !== "A" && slot !== "B") return;
+    loadedSlot.current = true;
+    api.comparisons().then((cmp) => {
+      const design = cmp[slot];
+      if (!design) return setLoadError(`Slot ${slot} is empty.`);
+      const taken = new Set<string>();
+      setServices(design.architecture.services.map((spec) => {
+        const entry = catalog.data.find((c) => c.type === spec.type);
+        if (!entry) throw new Error(`catalog has no ${spec.type}`);
+        const s = newService(entry, taken, { config: spec.config, usage: spec.usage ?? {} });
+        taken.add(String(s.config.name));
+        return s;
+      }));
+    }).catch((err) => setLoadError(`Could not load slot ${slot}: ${message(err)}`));
+  }, [catalog]);
+
   const onApplyFix = (changes: ConfigChange[]) => {
     setServices((prev) => applyChanges(prev, changes) ?? prev);
   };
@@ -167,12 +190,16 @@ export default function BuilderPage() {
           </p>
         </div>
         {services.length > 0 && (
-          <button type="button" onClick={() => window.confirm("Remove all services?") && setServices([])}
-                  className="rounded-md border border-line-strong px-3 py-1.5 text-xs text-zinc-300 transition-colors duration-150 hover:bg-raised">
-            Clear All
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <SaveSlots architecture={architecture} archKey={key} disabled={invalid || mode !== "live"} />
+            <button type="button" onClick={() => window.confirm("Remove all services?") && setServices([])}
+                    className="rounded-md border border-line-strong px-3 py-1.5 text-xs text-zinc-300 transition-colors duration-150 hover:bg-raised">
+              Clear All
+            </button>
+          </div>
         )}
       </div>
+      {loadError && <p role="alert" className="text-xs text-red-300">{loadError}</p>}
 
       <div className="grid gap-4 lg:grid-cols-[210px_minmax(0,1fr)] xl:grid-cols-[210px_minmax(0,1fr)_400px]">
         {/* palette */}
