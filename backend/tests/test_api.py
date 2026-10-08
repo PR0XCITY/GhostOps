@@ -184,6 +184,10 @@ def test_list_and_get_certificates(client):
     assert summary["verdict"] == "BLOCKED_PENDING_REVIEW"
     assert summary["risk_flag_counts"] == {"CRITICAL": 3, "HIGH": 5, "MEDIUM": 3, "LOW": 4}  # + advisory pillar findings
     assert summary["resource_change_count"] == 8 and summary["latest_decision"] is None
+    assert summary["source"] == {"kind": "plan", "services": []}  # a Terraform plan, not a Builder design
+    assert summary["blocking_count"] == 8
+    assert set(summary["pillar_scores"]) == {"security", "reliability", "cost", "performance"}
+    assert summary["pillar_scores"]["security"] == 0
     assert client.get(f"/certificates/{bad['plan_id']}").json() == bad
 
 
@@ -369,3 +373,24 @@ def test_ghostops_command_is_installed():
     exe = Path(sys.executable).parent / ("ghostops.exe" if sys.platform == "win32" else "ghostops")
     proc = subprocess.run([str(exe), "analyze", "--help"], capture_output=True, text=True, timeout=60)
     assert proc.returncode == 0 and "plan JSON file" in proc.stdout
+
+
+def test_summary_names_the_builder_design(tmp_path):
+    from app.store import Store
+
+    store = Store(tmp_path / "db")
+    flags = [{"rule": "GO-REL-006", "severity": "LOW", "resource": "aws_instance.web[0]", "message": "m",
+              "pillar": "reliability"}]
+    store.save_certificate({
+        "plan_id": "a" * 64, "timestamp": "2026-10-08T12:00:00Z", "verdict": "AUTO_APPROVED",
+        "generated_by": "template", "signature": "s" * 64, "resource_changes": [],
+        "blast_radius": {"risk_flags": flags}, "cost_delta": {"monthly_usd": 9.19}, "shadow_run": {"applied": True},
+        "architecture": {"services": [{"type": "ec2", "name": "web", "config": {}}, {"type": "s3", "name": "assets", "config": {}}]},
+        "pillars": {"security": {"score": 100, "findings": []}, "reliability": {"score": 95, "findings": []},
+                    "cost": {"score": 100, "findings": []}, "performance": {"score": 100, "findings": []}},
+    })
+    [summary] = store.list_certificates()
+    assert summary["source"] == {"kind": "builder", "services": [{"name": "web", "type": "ec2"},
+                                                                 {"name": "assets", "type": "s3"}]}
+    assert summary["pillar_scores"] == {"security": 100, "reliability": 95, "cost": 100, "performance": 100}
+    assert summary["blocking_count"] == 0

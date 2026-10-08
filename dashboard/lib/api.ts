@@ -3,7 +3,7 @@
 
 import type {
   ArchitectureError, ArchitectureService, CatalogService, Certificate, CertificateSummary, CheckResult, Decision,
-  PreviewResult, Severity, VerifyResult,
+  Pillar, PreviewResult, Severity, VerifyResult,
 } from "./types";
 import { SEVERITIES } from "./types";
 import type { Comparison, SavedDesign, Slot } from "./compare";
@@ -148,5 +148,14 @@ export function summarize(cert: Certificate): CertificateSummary {
     monthly_usd: cert.cost_delta.monthly_usd,
     shadow_applied: cert.shadow_run.applied,
     latest_decision: null,
+    source: cert.architecture?.services?.length
+      ? { kind: "builder", services: cert.architecture.services.map((s) => ({ name: s.name, type: s.type })) }
+      : { kind: "plan", services: [] },
+    pillar_scores: cert.pillars
+      ? (Object.fromEntries(Object.entries(cert.pillars).map(([p, v]) => [p, v.score])) as Record<Pillar, number>)
+      : null,
+    // same rule as backend blocks(): security CRITICAL/HIGH, or the budget gate
+    blocking_count: cert.blast_radius.risk_flags.filter((f) =>
+      f.rule === "GO-BUDGET-001" || ((f.pillar ?? "security") === "security" && (f.severity === "CRITICAL" || f.severity === "HIGH"))).length,
   };
 }

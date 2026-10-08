@@ -186,7 +186,7 @@ export default function BuilderPage() {
         <div className="flex flex-col gap-1">
           <h1 className="text-balance text-2xl font-semibold tracking-tight text-zinc-50">Architecture Builder</h1>
           <p className="text-sm text-zinc-400">
-            Compose services, see the Terraform, risks and cost as you edit, then apply it on MiniStack with Analyze.
+            Compose services, see the Terraform, risks and cost as you edit, then Certify it to run the full check and save it to Certificates.
           </p>
         </div>
         {services.length > 0 && (
@@ -294,8 +294,8 @@ export default function BuilderPage() {
               canApply={(changes) => canApply(services, changes)}
             />
             <p className="mt-2 text-[11px] leading-relaxed text-zinc-500">
-              Static checks run automatically a moment after you stop editing. Analyze runs the full pipeline,
-              including the MiniStack apply, and stores a signed certificate on the{" "}
+              Quick checks run automatically a moment after you stop editing (not saved). Certify runs the full
+              pipeline, including the MiniStack apply, and stores a signed certificate on the{" "}
               <Link href="/" className="text-cyan-300 hover:text-cyan-200">Certificates</Link> page.
             </p>
           </div>

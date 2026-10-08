@@ -165,7 +165,7 @@ Feedback comes in three steps, so it is quick but nothing heavy runs on every ke
 |---|---|---|---|
 | 350 ms after an edit | Field validation, generated Terraform, diagram | `POST /architectures/preview` | instant |
 | 2 s after you stop editing | Static check: `terraform plan`, OPA, graph diff, Infracost | `POST /architectures/check` | about 30 s |
-| You press **Analyze** | Full pipeline including the MiniStack shadow apply; stores a signed certificate | `POST /architectures/analyze` | 1 to 2 min |
+| You press **Certify** | Full pipeline including the MiniStack shadow apply; signs the result and saves it to the Certificates page | `POST /architectures/analyze` | 1 to 2 min |
 
 The static result reads **WOULD BE BLOCKED** or **WOULD BE AUTO-APPROVED** and is never
 signed. If you edit after a result, it is marked out of date until the next check.
@@ -217,10 +217,15 @@ Apply Fix: A is $25.43 a month cheaper, B has 0 blocking findings against 8.
 
 ### 2. Read the certificate (`/certificates/{plan_id}`)
 
-Every analysed plan, from the Builder, the CLI or the API, lands on the Certificates page. Each
-row shows the verdict, top severity, cost delta and review state: blocked certificates read
-*awaiting review* or *approved / denied by (reviewer)*; auto-approved ones read
-*auto-approved by policy*.
+Every certified design or plan lands on the Certificates page: press **Certify** in the
+Builder, or analyse a plan with the CLI or the API. The page starts with a three-step
+explainer (design, certify, review if blocked) and a **Certify a Design** button. Each row
+names what was certified: a Builder design by its services (for example "web, admin-star,
+public-bucket +1") or a Terraform plan by its hash. It also shows the four pillar scores, top
+severity with the number of blocking findings, the cost delta and the review state: blocked
+certificates read *awaiting review* or *approved / denied by (reviewer)*; auto-approved ones
+read *auto-approved by policy*. The Builder's automatic check is only a preview and is never
+saved; only Certify creates a certificate.
 
 ![Certificates](docs/screenshots/home.png)
 

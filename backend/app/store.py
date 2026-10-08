@@ -50,6 +50,20 @@ BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END;
 """
 
 
+def _source(cert: dict[str, Any]) -> dict[str, Any]:
+    """Where a certificate came from: a Builder design (with its services) or a Terraform plan."""
+    arch = cert.get("architecture")
+    if arch and arch.get("services"):
+        return {"kind": "builder", "services": [{"name": s["name"], "type": s["type"]} for s in arch["services"]]}
+    return {"kind": "plan", "services": []}
+
+
+def _blocks(flag: dict[str, Any]) -> bool:
+    from app.certificate import blocks  # late import: certificate imports nothing from here
+
+    return blocks(flag)
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
@@ -112,6 +126,9 @@ class Store:
                 "monthly_usd": cert["cost_delta"]["monthly_usd"],
                 "shadow_applied": cert["shadow_run"]["applied"],
                 "latest_decision": {k: decision[k] for k in ("decision", "reviewer", "decided_at")} if decision else None,
+                "source": _source(cert),
+                "pillar_scores": {p: v["score"] for p, v in cert["pillars"].items()} if cert.get("pillars") else None,
+                "blocking_count": sum(_blocks(f) for f in flags),
             })
         return out
 

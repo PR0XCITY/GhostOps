@@ -216,6 +216,10 @@ export interface CertificateSummary {
   monthly_usd: number | null;
   shadow_applied: boolean;
   latest_decision: { decision: "approve" | "deny"; reviewer: string; decided_at: string } | null;
+  // where it came from: a Builder design (with its services) or a Terraform plan
+  source?: { kind: "builder" | "plan"; services: { name: string; type: string }[] };
+  pillar_scores?: Record<Pillar, number> | null; // null for certificates from before pillars
+  blocking_count?: number;
 }
 
 export interface VerifyResult {

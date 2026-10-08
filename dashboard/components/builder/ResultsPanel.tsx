@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { ArrowRight, CheckCircle, Cube, Play, Prohibit, Wrench } from "@phosphor-icons/react";
+import { ArrowRight, CheckCircle, Cube, Prohibit, SealCheck, Wrench } from "@phosphor-icons/react";
 import { SEVERITY_STYLE } from "@/components/badges";
 import { ErrorState, SkeletonBlock } from "@/components/states";
 import { formatUsd } from "@/lib/format";
@@ -52,7 +52,7 @@ function VerdictCard({ verdict, kind, stale }: { verdict: Verdict; kind: "check"
             : (blocked ? "BLOCKED PENDING REVIEW" : "AUTO-APPROVED")}
         </p>
         <p className="text-[11px] text-zinc-400">
-          {kind === "check" ? "Static check (plan, OPA, graph, cost). Not signed; no MiniStack apply."
+          {kind === "check" ? "Preview from the quick check (plan, OPA, graph, cost). Not signed or saved: press Certify."
                             : "Certified: full pipeline incl. MiniStack apply, signed and stored."}
           {stale && " Out of date: the architecture changed since."}
         </p>
@@ -155,7 +155,7 @@ function ShadowPanel({ full, stale }: { full: Async<Certificate>; stale: boolean
     return (
       <p className="text-xs leading-relaxed text-zinc-500">
         {full.status === "error" ? "The last full analysis failed (see above). " : ""}
-        Nothing applied yet. Run <span className="text-zinc-300">Analyze</span> to apply this architecture on a fresh
+        Nothing applied yet. Press <span className="text-zinc-300">Certify</span> to apply this architecture on a fresh
         MiniStack and list what really gets created.
       </p>
     );
@@ -228,9 +228,17 @@ export function ResultsPanel({
         </span>
         <button type="button" onClick={onAnalyze} disabled={!hasServices || invalid || full.status === "running"}
                 className="flex items-center gap-1.5 rounded-md bg-cyan-400 px-3 py-1.5 text-xs font-medium text-zinc-950 transition-colors duration-150 hover:bg-cyan-300 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-40">
-          <Play size={13} weight="fill" aria-hidden="true" /> {full.status === "running" ? "Analyzing…" : "Analyze"}
+          <SealCheck size={14} weight="bold" aria-hidden="true" /> {full.status === "running" ? "Certifying…" : "Certify"}
         </button>
       </div>
+      <p className="-mt-1 px-4 pb-3 text-[11px] leading-relaxed text-zinc-500">
+        {full.status === "running" ? (
+          <>Running the full check on MiniStack… <Elapsed since={full.startedAt} /> (usually 40 to 150 s). It will appear on the Certificates page.</>
+        ) : (
+          <>The verdict below is a quick preview. <span className="text-zinc-300">Certify</span> runs the full check (policy, a real
+          MiniStack apply, cost), signs it and saves it to the Certificates page.</>
+        )}
+      </p>
 
       {!hasServices ? (
         <p className="border-t border-line px-4 py-8 text-sm text-zinc-500">Add a service to see the verdict, cost and risks.</p>
@@ -240,12 +248,12 @@ export function ResultsPanel({
           {full.status === "error" && (
             <div className="border-t border-line p-3">
               <ErrorState title="Full analysis failed" detail={full.error}
-                          hint="Check that MiniStack and the API are running, then press Analyze again." onRetry={onAnalyze} />
+                          hint="Check that MiniStack and the API are running, then press Certify again." onRetry={onAnalyze} />
             </div>
           )}
           {check.status === "error" && (
             <div className="border-t border-line p-3">
-              <ErrorState title="Static check failed" detail={check.error} hint="Edit the architecture or press Analyze to retry." />
+              <ErrorState title="Static check failed" detail={check.error} hint="Edit the architecture to retry the check." />
             </div>
           )}
           {!showResults && check.status === "running" && (
@@ -261,7 +269,7 @@ export function ResultsPanel({
                 {useFull && (
                   <Link href={`/certificates/${fullReady.plan_id}`}
                         className="mt-2 flex w-max items-center gap-1 text-xs text-cyan-300 hover:text-cyan-200">
-                    Open Certificate <ArrowRight size={12} aria-hidden="true" />
+                    <SealCheck size={13} aria-hidden="true" /> Saved to Certificates · Open certificate <ArrowRight size={12} aria-hidden="true" />
                   </Link>
                 )}
               </div>
