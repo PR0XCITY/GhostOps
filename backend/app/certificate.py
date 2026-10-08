@@ -48,8 +48,8 @@ from pathlib import Path
 from typing import Any
 
 from app.blast_radius import analyze as analyze_blast_radius
-from app.config import setting
-from app.cost import CostError, plan_cost
+from app.config import hosted, setting
+from app.cost import CostError, InfracostAuthError, plan_cost
 from app.plan_parser import PlanParseError, ResourceChange, parse_plan
 from app.policy_engine import PolicyEngineError, evaluate
 from app.shadow import ShadowError, ShadowResult, run_shadow
@@ -239,6 +239,11 @@ def cost_section(plan: dict[str, Any], result: dict[str, Any] | None = None, *, 
                 result = plan_cost(plan, usage_file=generated.usage_file(), usage_inputs=generated.usage_inputs())
             else:
                 result = plan_cost(plan)
+        except InfracostAuthError as exc:
+            if hosted():  # no interactive login on a server: say so instead of giving login steps
+                return {"monthly_usd": None, "note": "Cost not estimated: Infracost is not available on "
+                        "a hosted GhostOps (it has only an interactive browser login)."}, []
+            return {"monthly_usd": None, "note": f"Cost not estimated: {exc}"}, []
         except CostError as exc:
             return {"monthly_usd": None, "note": f"Cost not estimated: {exc}"}, []
     notes = []

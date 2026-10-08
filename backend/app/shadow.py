@@ -40,7 +40,13 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-MINISTACK_URL = os.environ.get("MINISTACK_ENDPOINT_URL", "http://localhost:4566").rstrip("/")
+def _ministack_url(value: str) -> str:
+    """Accept host:port too (Render's fromService hostport has no scheme)."""
+    value = value.strip().rstrip("/")
+    return value if "://" in value else f"http://{value}"
+
+
+MINISTACK_URL = _ministack_url(os.environ.get("MINISTACK_ENDPOINT_URL") or "http://localhost:4566")
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PLUGIN_CACHE = REPO_ROOT / ".terraform-plugin-cache"
 OVERRIDE_FILE = "ghostops_shadow_override.tf"

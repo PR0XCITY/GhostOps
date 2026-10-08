@@ -10,6 +10,18 @@ import type { Comparison, SavedDesign, Slot } from "./compare";
 
 export const API_BASE = (process.env.NEXT_PUBLIC_GHOSTOPS_API ?? "http://127.0.0.1:8000").replace(/\/$/, "");
 const SAMPLE_BASE = "/sample-certificates";
+// Only for a hosted API (GHOSTOPS_HOSTED=1). NEXT_PUBLIC_* values are compiled into the
+// browser bundle, so anyone who opens the dashboard can read this key: it slows down
+// casual abuse of the public API, it is not authentication.
+const API_KEY = process.env.NEXT_PUBLIC_GHOSTOPS_API_KEY ?? "";
+const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+function withApiKey(init: RequestInit): RequestInit {
+  if (!API_KEY || !MUTATING.has((init.method ?? "GET").toUpperCase())) return init;
+  const headers = new Headers(init.headers);
+  headers.set("X-GhostOps-Key", API_KEY);
+  return { ...init, headers };
+}
 
 export class ApiError extends Error {
   constructor(message: string, readonly status?: number, readonly errors?: ArchitectureError[]) {
@@ -28,7 +40,7 @@ async function request<T>(path: string, init: RequestInit = {}, timeoutMs = 1500
   outer?.addEventListener("abort", onOuterAbort);
   let response: Response;
   try {
-    response = await fetch(`${API_BASE}${path}`, { ...init, signal: controller.signal, cache: "no-store" });
+    response = await fetch(`${API_BASE}${path}`, { ...withApiKey(init), signal: controller.signal, cache: "no-store" });
   } catch {
     if (outer?.aborted) throw new DOMException("superseded", "AbortError"); // a newer request replaced this one
     const reason = controller.signal.aborted ? `timed out after ${Math.round(timeoutMs / 1000)}s` : "unreachable";

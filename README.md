@@ -352,6 +352,94 @@ PASS  Dashboard ESLint           6.5s  clean
 ALL CHECKS PASSED
 ```
 
+## Deploying (Vercel + Render)
+
+GhostOps is built as a local tool. It can also run online: the dashboard on Vercel and the API
+plus MiniStack on Render. **Never give a hosted GhostOps real AWS credentials.** It only needs
+MiniStack, uses hard-coded fake keys for it, and removes every `AWS_*` variable from its
+Terraform runs.
+
+### Hosted mode
+
+The image sets `GHOSTOPS_HOSTED=1`, and the API will not listen on anything other than
+127.0.0.1 unless this is set. In hosted mode:
+
+- every `POST`, `PUT` and `DELETE` needs the header `X-GhostOps-Key` with the value of
+  `GHOSTOPS_API_KEY` (at least 24 characters). Without it, or with the wrong value, the API
+  returns `401`, and it will not start if the key is missing;
+- `POST /analyze` refuses `plan_path` and `tf_dir` with `403`, so a caller cannot make the
+  server read its own files. Upload the plan JSON instead. Without `tf_dir` no shadow run
+  happens, so the verdict is `BLOCKED_PENDING_REVIEW` (fail closed). The bundled demos and
+  the Builder still run the full pipeline;
+- `GET` endpoints stay open: anyone with the URL can read the stored certificates and the
+  audit log.
+
+CORS always allows `http://localhost:3000`. Add your Vercel URL with `GHOSTOPS_CORS_ORIGINS`
+(comma-separated, exact `https://` origins; `*` is ignored).
+
+### API on Render
+
+1. Push the repository to GitHub. In Render, choose **New > Blueprint** and pick the repo.
+   [`render.yaml`](render.yaml) creates two services:
+   - `ghostops-api`: a Docker web service built from [`backend/Dockerfile`](backend/Dockerfile)
+     (Python 3.13, Terraform 1.16.4 and OPA 1.21.1 with pinned SHA-256 checksums, AWS
+     provider pre-cached);
+   - `ghostops-ministack`: a private service running `ministackorg/ministack` on port 4566.
+     It is reachable only from the API, and `MINISTACK_ENDPOINT_URL` is wired to it.
+2. Render asks for the values marked `sync: false`. Enter them in Render's dashboard and never
+   commit them:
+   - `GHOSTOPS_HMAC_SECRET`: `python -c "import secrets; print(secrets.token_hex(32))"`
+   - `GHOSTOPS_API_KEY`: generate one the same way
+   - `GROQ_API_KEY`: optional; without it the explanations use the built-in template
+   - `GHOSTOPS_CORS_ORIGINS`: your Vercel URL, for example `https://ghostops.vercel.app`
+3. When the deploy is live, `https://<your-service>.onrender.com/health` returns
+   `{"status":"ok"}`.
+
+To try the image locally first (Docker Desktop):
+
+```powershell
+docker build -f backend/Dockerfile -t ghostops-api .
+$env:GHOSTOPS_API_KEY = python -c "import secrets; print(secrets.token_hex(32))"
+docker run --rm -p 127.0.0.1:8000:8000 --env-file .env -e GHOSTOPS_API_KEY -e MINISTACK_ENDPOINT_URL=http://host.docker.internal:4566 ghostops-api
+```
+
+### Dashboard on Vercel
+
+1. **Add New > Project**, import the repo, set **Root Directory** to `dashboard`. The
+   framework (Next.js) is detected automatically.
+2. Environment variables:
+   - `NEXT_PUBLIC_GHOSTOPS_API` = `https://<your-service>.onrender.com`
+   - `NEXT_PUBLIC_GHOSTOPS_API_KEY` = the same value as `GHOSTOPS_API_KEY` on Render
+3. Deploy, then put the Vercel URL in `GHOSTOPS_CORS_ORIGINS` on Render.
+
+Without `NEXT_PUBLIC_GHOSTOPS_API`, or while the API is unreachable, the dashboard runs in
+demo mode with the sample certificates.
+
+**A key in a browser is a speed bump, not authentication.** Every `NEXT_PUBLIC_*` value is
+compiled into the JavaScript that Vercel serves, so anyone who opens the dashboard can read
+`NEXT_PUBLIC_GHOSTOPS_API_KEY` and call the API with it. It stops random scanners and drive-by
+requests, nothing more. For real access control, put the dashboard behind Vercel's
+deployment protection and keep the key private, or add proper user login. Rotate the key
+(change it on Render and Vercel, then redeploy both) if it is abused.
+
+### Hosting limits
+
+- **RAM.** Render's free plan has 512 MB. Terraform with the AWS provider can use several
+  hundred MB during a plan, so a full analysis may be killed for running out of memory. If that
+  happens, use the Standard plan (2 GB) for `ghostops-api`.
+- **Private services are paid.** Render does not offer private services on the free plan, so
+  MiniStack needs at least the Starter plan. Without MiniStack, shadow runs fail and every
+  certificate is blocked (fail closed).
+- **SQLite is temporary.** Certificates, the audit log and the compare slots are stored in
+  `/app/data/ghostops.db` inside the container, which is erased on every deploy, restart and
+  free-plan spin-down. To keep them, attach a Render persistent disk (paid) at `/app/data`.
+- **No Infracost.** Infracost v2 has only a browser OAuth login and no API key, so the image does
+  not include it. Hosted certificates show cost as `null` with a note and never try to log in.
+- **Cold starts.** A free web service sleeps after about 15 minutes without traffic and takes
+  up to a minute to wake. The first request may time out, and the dashboard then falls back to
+  demo mode; reload once the API is up.
+- **One shadow run at a time,** as locally. A full analysis takes 20-60 s on a small instance.
+
 ## Honest limitations
 
 - **MiniStack is young and is not a full AWS replica.** It is a 1.x community emulator. In
@@ -378,8 +466,10 @@ ALL CHECKS PASSED
   else needs your own Terraform and the plan-based flow.
 - **The explanation comes from an LLM.** Groq's wording varies between runs (the facts it may
   use are fixed and sanitized); if Groq fails, a template is used.
-- **Local tool, not a hosted service.** The API binds to 127.0.0.1 with no authentication and
-  can read any `.json` path it is given; only one shadow run uses MiniStack at a time.
+- **Local by default.** The API binds to 127.0.0.1 with no authentication and can read any
+  `.json` path it is given; only one shadow run uses MiniStack at a time. Hosted mode (see
+  [Deploying](#deploying-vercel--render)) adds a shared API key and turns off server paths,
+  but it has no user accounts and anyone can read the certificates.
 - **HMAC is symmetric.** Anyone holding `GHOSTOPS_HMAC_SECRET` can create valid certificates.
 
 ## Future work
@@ -406,4 +496,5 @@ demo/               bad and good Terraform demos, fixture generator, sample cert
 docs/               screenshots/ and sample-report.pdf
 scripts/            demo.py (one-command demo), test_all.py (one-command test suite)
 docker-compose.yml  MiniStack
+render.yaml         Render Blueprint: API (backend/Dockerfile) + private MiniStack service
 ```

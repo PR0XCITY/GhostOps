@@ -25,6 +25,7 @@ GROQ_KEY = "gsk_TESTKEYshouldNEVERappearINlogs123456"
 def env(monkeypatch):
     monkeypatch.setenv("GHOSTOPS_HMAC_SECRET", SECRET)
     monkeypatch.setenv("GROQ_API_KEY", GROQ_KEY)
+    monkeypatch.setenv("GHOSTOPS_HOSTED", "0")  # explicit, so a local .env cannot switch it on
 
 
 class FakeAnalyzer:

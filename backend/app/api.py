@@ -24,12 +24,18 @@ PUT  /comparisons/{A|B}               same body as /architectures/check: runs th
 DELETE /comparisons/{A|B}             empty a slot
 GET  /health
 
-CORS allows the dashboard at http://localhost:3000. Request bodies and settings
-are never logged; a log filter also redacts secret values if one slips through.
+CORS allows the dashboard at http://localhost:3000 plus any origins listed in
+GHOSTOPS_CORS_ORIGINS (comma-separated). Request bodies and settings are never
+logged; a log filter also redacts secret values if one slips through.
+
+Hosted mode (GHOSTOPS_HOSTED=1, e.g. on Render): every POST/PUT/DELETE needs the
+header X-GhostOps-Key equal to GHOSTOPS_API_KEY (401 otherwise), and /analyze
+refuses plan_path and tf_dir (403): a caller must not name files on the server.
 """
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 from contextlib import asynccontextmanager
@@ -39,6 +45,7 @@ from typing import Any, Callable, Literal
 from fastapi import FastAPI, HTTPException, Path as PathParam, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ValidationError
 
 from app.architecture import analyze_architecture, check_architecture, services_with_resources
@@ -47,12 +54,14 @@ from app.compare import comparison, snapshot
 from app.shadow import ShadowError
 from app.certificate import CertificateError, build_certificate, verify
 from app.generator import ArchitectureError, generate
-from app.config import check_required, db_path, install_secret_filter
+from app.config import check_required, cors_origins, db_path, hosted, install_secret_filter, setting
 from app.plan_parser import PlanParseError
 from app.store import Store
 
 log = logging.getLogger("ghostops.api")
-DASHBOARD_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000"]
+API_KEY_HEADER = "X-GhostOps-Key"
+MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+HOSTED_PATHS_REFUSED = "plan_path and tf_dir are disabled on a hosted GhostOps; upload the plan JSON instead"
 MAX_PLAN_BYTES = 20 * 1024 * 1024
 PLAN_ID = PathParam(pattern=r"^[0-9a-f]{64}$", description="sha256 plan id")
 NO_APPLY_NOTE = "Recorded in the audit log only. GhostOps never applies changes to any real system."
@@ -99,6 +108,11 @@ def _decode_plan(raw: bytes) -> dict[str, Any]:
     return plan
 
 
+def _refuse_server_paths(is_hosted: bool, *values: Any) -> None:
+    if is_hosted and any(values):
+        raise HTTPException(403, HOSTED_PATHS_REFUSED)
+
+
 def _tf_dir(value: str | None) -> str | None:
     if not value:
         return None
@@ -118,8 +132,21 @@ def create_app(store: Store | None = None, analyzer: Analyzer = build_certificat
         yield
 
     app = FastAPI(title="GhostOps", version="0.7.0", lifespan=lifespan)
-    app.add_middleware(CORSMiddleware, allow_origins=DASHBOARD_ORIGINS, allow_methods=["GET", "POST", "PUT", "DELETE"],
-                       allow_headers=["Content-Type"])
+    is_hosted = hosted()
+    api_key = (setting("GHOSTOPS_API_KEY") or "").encode() if is_hosted else b""
+
+    @app.middleware("http")
+    async def require_api_key(request: Request, call_next):
+        """Hosted mode: no POST/PUT/DELETE without the API key (constant-time compare)."""
+        if is_hosted and request.method in MUTATING_METHODS:
+            given = request.headers.get(API_KEY_HEADER, "").encode()
+            if not hmac.compare_digest(given, api_key):
+                return JSONResponse({"detail": f"missing or wrong {API_KEY_HEADER} header"}, status_code=401)
+        return await call_next(request)
+
+    # Added after the key check so CORS wraps it: a 401 still carries CORS headers.
+    app.add_middleware(CORSMiddleware, allow_origins=cors_origins(), allow_methods=["GET", "POST", "PUT", "DELETE"],
+                       allow_headers=["Content-Type", API_KEY_HEADER])
     app.state.store = store or Store(db_path())
 
     def get_cert(plan_id: str) -> dict[str, Any]:
@@ -144,6 +171,7 @@ def create_app(store: Store | None = None, analyzer: Analyzer = build_certificat
             if len(raw) > MAX_PLAN_BYTES:
                 raise HTTPException(413, "plan file is larger than 20 MB")
             plan = _decode_plan(raw)
+            _refuse_server_paths(is_hosted, form.get("tf_dir"))
             tf_dir = _tf_dir(str(form.get("tf_dir") or "") or None)
             use_groq = str(form.get("use_groq", "true")).lower() not in ("false", "0", "no")
         else:
@@ -153,6 +181,7 @@ def create_app(store: Store | None = None, analyzer: Analyzer = build_certificat
                 raise HTTPException(422, f"invalid request body: {exc}") from None
             if (body.plan_path is None) == (body.plan is None):
                 raise HTTPException(422, "give exactly one of plan_path or plan")
+            _refuse_server_paths(is_hosted, body.plan_path, body.tf_dir)
             plan = _load_plan_file(body.plan_path) if body.plan_path else body.plan
             tf_dir, use_groq = _tf_dir(body.tf_dir), body.use_groq
 

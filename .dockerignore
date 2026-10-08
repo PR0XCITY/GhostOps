@@ -1,0 +1,19 @@
+# Build context is the repo root; the image only needs backend/ and demo/*.tf.
+**/.env
+**/.env.*
+.git
+.venv
+.claude
+.agents
+CLAUDE.md
+.terraform-plugin-cache
+**/.terraform
+**/*.tfstate*
+**/*.tfplan
+**/__pycache__
+**/*.egg-info
+**/node_modules
+dashboard
+data
+logs
+docs

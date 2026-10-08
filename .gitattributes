@@ -1,0 +1,4 @@
+# Files read inside Linux containers keep LF endings on Windows checkouts too.
+Dockerfile text eol=lf
+.dockerignore text eol=lf
+render.yaml text eol=lf

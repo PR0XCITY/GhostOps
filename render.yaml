@@ -1,0 +1,53 @@
+# Render Blueprint for the GhostOps API (https://render.com/docs/blueprint-spec).
+# New > Blueprint > pick this repo. Render asks for every `sync: false` value in its
+# dashboard; no secret is ever committed here.
+#
+# Never add AWS credentials: GhostOps only talks to MiniStack (fake keys are hard-coded
+# in app/shadow.py), and the image strips AWS_* variables from every Terraform run.
+services:
+  - type: web
+    name: ghostops-api
+    runtime: docker
+    # Free has 512 MB RAM. Terraform + the AWS provider can exceed that on a full
+    # analysis; use "standard" (2 GB) if analyses get killed. See README "Deploying".
+    plan: free
+    region: oregon
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeploy: false
+    envVars:
+      - key: GHOSTOPS_HOSTED            # API key on POST/PUT/DELETE, no plan_path/tf_dir
+        value: "1"
+      - key: GHOSTOPS_HMAC_SECRET       # >= 32 chars; python -c "import secrets; print(secrets.token_hex(32))"
+        sync: false
+      - key: GHOSTOPS_API_KEY           # >= 24 chars; the same value goes in Vercel's NEXT_PUBLIC_GHOSTOPS_API_KEY
+        sync: false
+      - key: GROQ_API_KEY               # optional; without it explanations use the built-in template text
+        sync: false
+      - key: GHOSTOPS_CORS_ORIGINS      # your Vercel URL(s), comma-separated, e.g. https://ghostops.vercel.app
+        sync: false
+      - key: MINISTACK_ENDPOINT_URL     # host:port of the private MiniStack service below
+        fromService:
+          type: pserv
+          name: ghostops-ministack
+          property: hostport
+
+  # MiniStack: the local AWS emulator used as the shadow-apply target. Private service:
+  # reachable only from the API on Render's private network, never from the internet.
+  # Render does not offer private services on the free plan.
+  - type: pserv
+    name: ghostops-ministack
+    runtime: image
+    plan: starter
+    region: oregon
+    image:
+      url: docker.io/ministackorg/ministack:latest
+    autoDeploy: false
+    envVars:
+      - key: GATEWAY_PORT
+        value: "4566"
+      - key: PORT
+        value: "4566"
+      - key: LOG_LEVEL
+        value: INFO

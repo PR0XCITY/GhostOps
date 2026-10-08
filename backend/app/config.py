@@ -32,7 +32,8 @@ def setting(name: str, default: str | None = None) -> str | None:
 
 
 REPO_ROOT = ENV_FILE.parent
-SECRET_SETTINGS = ("GHOSTOPS_HMAC_SECRET", "GROQ_API_KEY")
+SECRET_SETTINGS = ("GHOSTOPS_HMAC_SECRET", "GROQ_API_KEY", "GHOSTOPS_API_KEY")
+LOCAL_ORIGINS = ("http://localhost:3000", "http://127.0.0.1:3000")
 
 
 class ConfigError(RuntimeError):
@@ -47,12 +48,37 @@ def check_required() -> None:
         problems.append("GHOSTOPS_HMAC_SECRET is not set (it signs every Risk Certificate).")
     elif len(secret) < 32:
         problems.append("GHOSTOPS_HMAC_SECRET is shorter than 32 characters.")
+    if hosted():
+        key = setting("GHOSTOPS_API_KEY")
+        if not key:
+            problems.append("GHOSTOPS_API_KEY is not set (GHOSTOPS_HOSTED=1 requires it for every POST/PUT/DELETE).")
+        elif len(key) < 24:
+            problems.append("GHOSTOPS_API_KEY is shorter than 24 characters.")
     if problems:
         raise ConfigError(
             "GhostOps cannot start:\n  - " + "\n  - ".join(problems) + "\n"
             f"Add it to {ENV_FILE} (template: .env.example). Generate one with:\n"
             '  python -c "import secrets; print(secrets.token_hex(32))"'
         )
+
+
+def hosted() -> bool:
+    """GHOSTOPS_HOSTED=1: running on a public host (Render). Turns on the API key
+    check and turns off everything that reads server paths named by the caller."""
+    return (setting("GHOSTOPS_HOSTED") or "").strip().lower() in ("1", "true", "yes")
+
+
+def cors_origins() -> list[str]:
+    """The local dashboard plus GHOSTOPS_CORS_ORIGINS (comma-separated, e.g. a Vercel URL).
+
+    Only explicit http(s) origins are accepted; "*" and anything else is ignored.
+    """
+    extra = [o.strip().rstrip("/") for o in (setting("GHOSTOPS_CORS_ORIGINS") or "").split(",")]
+    origins = list(LOCAL_ORIGINS)
+    for origin in extra:
+        if origin.startswith(("https://", "http://")) and "*" not in origin and origin not in origins:
+            origins.append(origin)
+    return origins
 
 
 def db_path() -> Path:
