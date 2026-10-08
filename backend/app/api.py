@@ -12,6 +12,8 @@ POST /certificates/{plan_id}/decision {"decision": "approve"|"deny", "reviewer":
      recorded in the append-only audit log; NEVER applied to any real system
 GET  /verify/{plan_id}                re-check the stored certificate's signature
 GET  /demos, POST /analyze/demo/{bad|good}   run a bundled demo (no paths from the browser)
+GET  /catalog                         services the Terraform generator supports, with form fields
+POST /architectures/preview           {"services": [{"type", "config"}]} -> generated Terraform only
 GET  /health
 
 CORS allows the dashboard at http://localhost:3000. Request bodies and settings
@@ -31,7 +33,9 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, ValidationError
 
+from app.catalog import catalog
 from app.certificate import CertificateError, build_certificate, verify
+from app.generator import ArchitectureError, generate
 from app.config import check_required, db_path, install_secret_filter
 from app.plan_parser import PlanParseError
 from app.store import Store
@@ -148,6 +152,28 @@ def create_app(store: Store | None = None, analyzer: Analyzer = build_certificat
         app.state.store.save_certificate(cert)
         log.info("analyzed plan %s verdict=%s", cert["plan_id"], cert["verdict"])
         return cert
+
+    @app.get("/catalog")
+    def get_catalog() -> list[dict[str, Any]]:
+        return catalog()
+
+    @app.post("/architectures/preview")
+    async def preview_architecture(request: Request) -> dict[str, Any]:
+        """Terraform for an architecture. Generates only: no plan, no apply, nothing stored."""
+        try:
+            body = await request.json()
+        except ValueError:
+            raise HTTPException(422, "body must be JSON: {\"services\": [{\"type\": ..., \"config\": {...}}]}") from None
+        try:
+            generated = generate(body)
+        except ArchitectureError as exc:
+            raise HTTPException(422, {"message": "invalid architecture", "errors": exc.errors}) from None
+        return {
+            "terraform": generated.main_tf,
+            "filename": "main.tf",
+            "resources": generated.resources,
+            "services": [{"type": s.type, "name": s.slug, "config": s.config} for s in generated.services],
+        }
 
     @app.get("/demos")
     def list_demos() -> list[dict[str, str]]:

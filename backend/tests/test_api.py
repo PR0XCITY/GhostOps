@@ -131,6 +131,43 @@ def test_demos(client, analyzer):
     assert client.post("/analyze/demo/evil").status_code == 404
 
 
+def test_catalog_endpoint(client):
+    r = client.get("/catalog")
+    assert r.status_code == 200
+    services = r.json()
+    assert [s["type"] for s in services] == ["ec2", "s3", "rds", "vpc", "iam", "lambda", "dynamodb",
+                                            "cloudwatch_alarm", "alb"]
+    ec2 = services[0]
+    assert ec2["shadow_supported"] is True and ec2["pricing"] == "fixed"
+    assert {f["name"] for f in ec2["fields"]} >= {"instance_type", "count", "volume_gb", "ssh_source_cidr"}
+
+
+def test_architecture_preview_returns_terraform_only(client, analyzer, store):
+    body = {"services": [{"type": "ec2", "config": {"name": "web", "count": 2}},
+                         {"type": "s3", "config": {"name": "assets"}}]}
+    r = client.post("/architectures/preview", json=body)
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert set(out) == {"terraform", "filename", "resources", "services"}
+    assert out["filename"] == "main.tf" and 'resource "aws_instance" "web"' in out["terraform"]
+    assert "aws_s3_bucket.assets" in out["resources"]
+    assert out["services"][0] == {"type": "ec2", "name": "web",
+                                  "config": {"name": "web", "instance_type": "t3.micro", "count": 2,
+                                             "volume_gb": 20, "ssh_source_cidr": "10.0.0.0/16"}}
+    assert analyzer.calls == [] and client.get("/certificates").json() == []  # nothing analysed or stored
+
+
+def test_architecture_preview_validation_errors(client):
+    r = client.post("/architectures/preview", json={"services": [{"type": "ec2", "config": {"count": 99}},
+                                                                 {"type": "warp-drive"}]})
+    assert r.status_code == 422
+    detail = r.json()["detail"]
+    assert detail["message"] == "invalid architecture"
+    assert {(e["service"], e["field"]) for e in detail["errors"]} == {(0, "count"), (1, "type")}
+    bad = client.post("/architectures/preview", content=b"nope", headers={"content-type": "application/json"})
+    assert bad.status_code == 422
+
+
 # --- /certificates ----------------------------------------------------------------------------
 
 

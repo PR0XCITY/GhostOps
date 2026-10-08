@@ -144,6 +144,9 @@ def shadow_env(workspace: Path) -> dict[str, str]:
         TF_IN_AUTOMATION="1",
         TF_INPUT="0",
         TF_PLUGIN_CACHE_DIR=str(PLUGIN_CACHE),
+        # Generated configs (app/generator.py) ship without a lock file; without this,
+        # Terraform skips the cache and re-downloads the ~685 MB AWS provider per run.
+        TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE="1",
     )
     return env
 
