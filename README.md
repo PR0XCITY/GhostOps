@@ -32,20 +32,20 @@ flowchart LR
 
     subgraph analysis["Analysis of one plan"]
         parser["Plan parser<br/>normalise resource changes"]
-        opa["OPA / Rego rules<br/>static security checks"]
-        graph["NetworkX blast radius<br/>before/after graph diff"]
+        opa["OPA / Rego rules<br/>security, reliability, cost, performance"]
+        blast["NetworkX blast radius<br/>before/after graph diff"]
         shadow["Shadow run<br/>apply on MiniStack, then reset"]
         cost["Infracost<br/>monthly cost delta"]
     end
 
     api --> parser
     parser --> opa
-    parser --> graph
+    parser --> blast
     parser --> shadow
     parser --> cost
 
     opa --> cert["Risk Certificate<br/>verdict + HMAC-SHA256 signature"]
-    graph --> cert
+    blast --> cert
     shadow --> cert
     cost --> cert
     cert -. "sanitized rule ids, resource types, severities" .-> groq["Groq LLM<br/>2-3 sentence explanation"]
