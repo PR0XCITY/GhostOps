@@ -192,6 +192,23 @@ plan. Usage-based ones (S3, Lambda, DynamoDB) take optional monthly usage inputs
 requests, invocations) that are passed to Infracost; left blank, they are priced at zero usage
 and marked as a lower bound. The certificate records the usage assumptions it used.
 
+#### Compare two designs (`/compare`)
+
+**Save as A** and **Save as B** in the Builder keep the current design in SQLite (slots A and
+B; saving again replaces a slot). Each save runs the same static check as the Builder (about
+25 s), so the Compare page opens instantly with both designs side by side: monthly cost,
+verdict, pillar scores (with the difference to the other design), findings by severity, cost
+per service, and **What Differs**: services only in A, only in B, and every setting that
+differs between services with the same name (defaults filled in first, usage inputs included).
+
+Two highlights say which design is **cheaper** (lower monthly cost; "unknown" if either cost
+is unknown) and which has **fewer risks**: fewer blocking findings (security CRITICAL/HIGH)
+first, then fewer findings, then fewer penalty points. **Open in Builder** reloads a saved
+design (`/builder?load=A`). Below, A is the Risky example and B is the same design after every
+Apply Fix: A is $25.43 a month cheaper, B has 0 blocking findings against 8.
+
+![Compare](docs/screenshots/compare.png)
+
 ### 2. Read the certificate (`/certificates/{plan_id}`)
 
 Every analysed plan, from the Builder, the CLI or the API, lands on the Certificates page. Each
@@ -310,6 +327,8 @@ Exit code 0 = auto-approved, 1 = blocked, 2 = error. The same works through the 
 | `GET /certificates`, `GET /certificates/{id}` | List or fetch certificates |
 | `GET /certificates/{id}/decisions`, `POST /certificates/{id}/decision` | Audit log; approve or deny a blocked certificate |
 | `GET /verify/{id}` | Recompute and check the HMAC signature |
+| `PUT /comparisons/{A\|B}` | Save a design in a compare slot (runs the static check, stores architecture + result) |
+| `GET /comparisons`, `DELETE /comparisons/{A\|B}` | Both slots with diff and highlights; empty a slot |
 
 ### Run all tests (one command)
 
