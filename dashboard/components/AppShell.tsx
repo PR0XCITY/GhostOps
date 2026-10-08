@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ShieldCheckered } from "@phosphor-icons/react";
 import { useMode } from "./ModeProvider";
-import { API_BASE } from "@/lib/api";
+import { API_BASE, API_IS_LOCAL } from "@/lib/api";
 
 const NAV = [
   { href: "/", label: "Certificates" },
@@ -13,9 +13,9 @@ const NAV = [
 ];
 
 function ModeIndicator() {
-  const { mode, recheck } = useMode();
+  const { mode, waking, recheck } = useMode();
   if (mode === "checking") {
-    return <span className="font-mono text-xs text-zinc-500">Connecting…</span>;
+    return <span className="font-mono text-xs text-zinc-500">{waking ? "Waking up the API…" : "Connecting…"}</span>;
   }
   if (mode === "live") {
     return (
@@ -41,7 +41,7 @@ function ModeIndicator() {
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const { mode } = useMode();
+  const { mode, waking } = useMode();
   return (
     <div className="flex min-h-[100dvh] flex-col">
       <a
@@ -78,12 +78,24 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </div>
       </header>
+      {mode === "checking" && waking && (
+        <div className="border-b border-line bg-surface print:hidden" role="status">
+          <p className="mx-auto max-w-[1400px] px-4 py-2 text-xs text-zinc-400 md:px-6">
+            Waking up the GhostOps API at <span className="font-mono" translate="no">{API_BASE}</span>. Free hosting
+            puts it to sleep when idle, so the first visit can take up to a minute.
+          </p>
+        </div>
+      )}
       {mode === "demo" && (
         <div className="border-b border-amber-400/20 bg-amber-400/[0.06] print:hidden">
           <p className="mx-auto max-w-[1400px] px-4 py-2 text-xs text-amber-200/90 md:px-6">
             Demo mode: the GhostOps API at <span className="font-mono" translate="no">{API_BASE}</span> is unreachable,
-            so these are bundled sample certificates. Start it with{" "}
-            <span className="font-mono" translate="no">python -m app.server</span>.
+            so these are bundled sample certificates.{" "}
+            {API_IS_LOCAL ? (
+              <>Start it with <span className="font-mono" translate="no">python -m app.server</span>.</>
+            ) : (
+              <>Click <span className="font-medium">Demo mode</span> at the top right to try again.</>
+            )}
           </p>
         </div>
       )}

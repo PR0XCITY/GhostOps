@@ -76,9 +76,14 @@ function postJson<T>(path: string, body: unknown, timeoutMs: number, signal?: Ab
   }, timeoutMs, signal);
 }
 
-export async function apiReachable(): Promise<boolean> {
+// A hosted API (e.g. Render's free plan) sleeps when idle and needs up to a minute to wake;
+// a local one answers at once or is not running.
+export const API_IS_LOCAL = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(API_BASE);
+export const WAKE_TIMEOUT_MS = 90000;
+
+export async function apiReachable(timeoutMs = 2500): Promise<boolean> {
   try {
-    await request<{ status: string }>("/health", {}, 2500);
+    await request<{ status: string }>("/health", {}, timeoutMs);
     return true;
   } catch {
     return false;
